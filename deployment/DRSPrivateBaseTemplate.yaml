@@ -2,19 +2,10 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: "This CloudFormation template (SO9XXX) deploys a target VPC with private and public subnets across two Availability Zones, AWS Site-to-Site VPN components (Virtual Private Gateway, Customer Gateway, VPN Connection), VPC endpoints for AWS Elastic Disaster Recovery and supporting services (DRS, S3, SSM, EC2, Secrets Manager, CloudWatch Logs), Route 53 Resolver inbound endpoint for DNS resolution, optional Windows validation instance, and Lambda function to initialize DRS with default replication and launch configuration settings."
 
 Parameters:
-  # SourceVpcCidrBlock:
-  #   Type: String
-  #   Default: "10.0.0.0/16"
-  #   Description: "CIDR block for the Source VPC (us-west-2)"
-
   TargetVpcCidrBlock:
     Type: String
     Default: "192.168.100.0/22"
     Description: "CIDR block for the Target VPC. Default /22 provides 1024 IPs for multi-AZ deployment with room for growth."
-
-  # CEsslspeedtestAmiId:
-  #   Type: "AWS::EC2::Image::Id"
-  #   Default: "ami-00b38c08ab3506ea7"
 
   RDPUsername:
     Description: Username for Windows instance RDP access (only used if CreateWindowsInstance=yes)
@@ -31,14 +22,12 @@ Parameters:
   OnPremPublicIP:
     Description: Public IP address of your on-premises VPN device
     Type: String
-    Default: "76.129.229.253" # Remove after testing.
     AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$
     ConstraintDescription: Must be a valid IP address (e.g., 203.0.113.1)
 
   OnPremCidrBlock:
     Description: CIDR block of your on-premises network
     Type: String
-    Default: "192.168.1.0/24"
     AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
     ConstraintDescription: Must be a valid CIDR block (e.g., 10.0.0.0/16)
 
@@ -223,7 +212,6 @@ Parameters:
       - "False"
     Default: "True"
 
-
 Conditions:
   CreateWindowsInstanceCondition: !Equals [!Ref CreateWindowsInstance, "yes"]
   CreateRoute53ResolverCondition: !Equals [!Ref CreateRoute53Resolver, "yes"]
@@ -234,7 +222,6 @@ Conditions:
 Resources:
   DRSCredentialsSecret:
     Type: AWS::SecretsManager::Secret
-    # checkov:skip=CKV_AWS_149:Using default AWS managed key for workshop simplicity
     Properties:
       Name: !Sub "drs-workshop-credentials-${AWS::Region}"
       Description: "DRS Workshop credentials for RDP and SSH access"
@@ -455,38 +442,6 @@ Resources:
           IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
 
-  # CEsslspeedtestSecurityGroup:
-  #   Type: "AWS::EC2::SecurityGroup"
-  #   Properties:
-  #     GroupName: !Sub "${AWS::StackName}-CEsslspeedtest-SG"
-  #     GroupDescription: "Security group for CEsslspeedtest instances"
-  #     VpcId: !Ref Vpc
-  #     SecurityGroupIngress:
-  #       - IpProtocol: tcp
-  #         FromPort: 1500
-  #         ToPort: 1500
-  #         CidrIp: "0.0.0.0/0"
-  #     SecurityGroupEgress:
-  #       - Description: Allow all outbound traffic
-  #         IpProtocol: "-1"
-  #         CidrIp: 0.0.0.0/0
-
-  # CEsslspeedtestnstance1:
-  #   Type: AWS::EC2::Instance
-  #   Properties:
-  #     IamInstanceProfile: !Ref ValidationInstanceProfile
-  #     ImageId: !Ref CEsslspeedtestAmiId
-  #     InstanceType: "m5n.large"
-  #     NetworkInterfaces:
-  #       - GroupSet:
-  #           - !Ref CEsslspeedtestSecurityGroup
-  #         AssociatePublicIpAddress: false
-  #         DeviceIndex: "0"
-  #         SubnetId: !Ref PrivateSubnet3
-  #     Tags:
-  #       - Key: "Name"
-  #         Value: "CE-SSL-SpeedTest"
-
   VPCEndpointSecurityGroup:
     Type: "AWS::EC2::SecurityGroup"
     Properties:
@@ -583,7 +538,7 @@ Resources:
       Path: "/"
       Roles:
         - !Ref ValidationRole
-        
+
   ValidationRole:
     Type: "AWS::IAM::Role"
     Condition: CreateWindowsInstanceCondition
@@ -600,7 +555,6 @@ Resources:
       Path: /
       ManagedPolicyArns:
         - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
         - "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
       Tags:
         - Key: Name
@@ -615,7 +569,6 @@ Resources:
       IamInstanceProfile: !Ref ValidationInstanceProfile
       ImageId: "{{resolve:ssm:/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base}}"
       InstanceType: "t3.small"
-      # KeyName: "my-key-pair"
       NetworkInterfaces:
         - GroupSet:
             - !Ref WebSecurityGroup
@@ -648,7 +601,6 @@ Resources:
           Value: "FailBackValidation"
         - Key: Project
           Value: DRS-VMware
-
 
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -871,14 +823,16 @@ Resources:
         - Name: !Sub "drs.${AWS::Region}.amazonaws.com."
           Type: "A"
           AliasTarget:
-            HostedZoneId: !Select [
+            HostedZoneId:
+              !Select [
                 0,
                 !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]],
-              ] # [Z1YSA3EXCYUU9Z]:vpce-0d04163affa4fdfa4-zk0q9gao.drs.us-west-2.vpce.amazonaws.com [0]hostedzoneid we want]
-            DNSName: !Select [
+              ]
+            DNSName:
+              !Select [
                 1,
                 !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]],
-              ] # Z1YSA3EXCYUU9Z:[vpce-0d04163affa4fdfa4-zk0q9gao.drs.us-west-2.vpce.amazonaws.com] [1]dns name we want]
+              ]
 
   DRSLambdaExecutionRole:
     Type: "AWS::IAM::Role"
@@ -1210,7 +1164,6 @@ Resources:
               Value: "created-by-aws-drs-do-not-delete"
             - Key: "AWSElasticDisasterRecoveryManaged"
               Value: "drs.amazonaws.com"
-
 
 Outputs:
   VpcId:
