@@ -4,46 +4,52 @@ This README describes the CloudFormation template and how to deploy and operate 
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Using this Guidance with AWS Elastic Disaster Recovery](#using-this-guidance-with-aws-elastic-disaster-recovery)
-- [Key success criteria and example matrix](#key-success-criteria-and-example-matrix)
-- [AWS Elastic Disaster Recovery configuration guidance](#aws-elastic-disaster-recovery-configuration-guidance)
-- [Prerequisites](#prerequisites)
-- [Template deployment steps](#template-deployment-steps)
-- [Deployment Validation](#deployment-validation)
-- [Running the Guidance and validating AWS Elastic Disaster Recovery](#running-the-guidance-and-validating-aws-elastic-disaster-recovery)
-- [Cleanup](#cleanup)
-- [Notices](#notices)
-- [Authors](#authors)
+1. [Overview](#overview)
+   - [Architecture](#architecture)
+   - [Cost](#cost)
+2. [Using this Guidance with AWS Elastic Disaster Recovery](#using-this-guidance-with-aws-elastic-disaster-recovery)
+3. [Key Success Criteria and Example Matrix](#key-success-criteria-and-example-matrix)
+4. [AWS Elastic Disaster Recovery Configuration](#aws-elastic-disaster-recovery-configuration-guidance)
+5. [Prerequisites](#prerequisites)
+   - [AWS Account](#aws-account)
+   - [AWS Region](#aws-region)
+   - [AWS Permissions](#aws-permissions)
+6. [Deployment Steps](#template-deployment-steps)
+7. [Deployment Validation](#deployment-validation)
+   - [Test Data](#test-data)
+8. [Running the Guidance and validating AWS Elastic Disaster Recovery](#running-the-guidance-and-validating-aws-elastic-disaster-recovery)
+9. [Cleanup](#cleanup)
+10. [Notices](#notices)
+11. [Authors](#authors)
 
 This repository accompanies the AWS Prescriptive Guidance document [`PrescriptiveGuidance_AWSElasticDisasterRecovery.md`](PrescriptiveGuidance_AWSElasticDisasterRecovery.md), which explains how to use **AWS Elastic Disaster Recovery (AWS DRS)**, including background, architecture patterns, planning considerations, and end-to-end usage guidance. This README focuses on the **infrastructure-as-code implementation** of that Guidance. It explains what the `DRSPrivateBaseTemplate.yaml` CloudFormation template deploys and how to deploy and operate the private-connectivity environment in your AWS accounts to validate continuous replication, connectivity, and recovery behavior.
 
 ## Overview
 
-This Guidance describes how to deploy an environment for **AWS Elastic Disaster Recovery** that uses **private connectivity** between your on-premises network and an AWS VPC. The CloudFormation template provisions connectivity by using an **AWS Site-to-Site VPN**. The underlying VPC and subnet design can be adapted to use an **AWS Direct Connect private virtual interface**, which you configure separately if your organization uses Direct Connect. The provided AWS CloudFormation template creates a target VPC, VPN components, VPC endpoints, and optional validation resources so that you can test AWS Elastic Disaster Recovery replication and recovery flows without routing traffic over the public internet.
+This Guidance describes how to deploy an environment for **[AWS Elastic Disaster Recovery](https://docs.aws.amazon.com/drs/latest/userguide/what-is-drs.html)** that uses **private connectivity** between your on-premises network and an [AWS VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html). The [CloudFormation](https://docs.aws.amazon.com/cloudformation/index.html) template provisions connectivity by using an **[AWS Site-to-Site VPN](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html)**. The underlying VPC and subnet design can be adapted to use an **[AWS Direct Connect](https://docs.aws.amazon.com/directconnect/latest/UserGuide/Welcome.html) private virtual interface**, which you configure separately if your organization uses Direct Connect. The provided AWS CloudFormation template creates a target VPC, VPN components, [VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html), and optional validation resources so that you can test AWS Elastic Disaster Recovery replication and recovery flows without routing traffic over the public internet.
 
 The primary focus of this Guidance is **initializing AWS Elastic Disaster Recovery and preparing the target environment**. The template does **not** install the AWS Replication Agent or create replication servers; those are created later when you onboard source servers into AWS Elastic Disaster Recovery.
 
 The CloudFormation template, `DRSPrivateBaseTemplate.yaml`, deploys the following resources:
 
-- An **AWS VPC** that acts as the DRS **staging/target environment**, with:
+- An **Amazon VPC** that acts as the DRS **staging/target environment**, with:
   - A configurable CIDR block (default `192.168.100.0/22`).
   - Private subnets for DRS staging and recovery instances.
-- An **AWS Site-to-Site VPN** between your on-premises network and the target VPC:
-  - A **virtual private gateway (VGW)** in the AWS VPC.
+- An **AWS Site-to-Site VPN** between your on-premises network and the target Amazon VPC:
+  - A **virtual private gateway (VGW)** in the Amazon VPC.
   - A **customer gateway (CGW)** that uses your on-premises public IP.
   - Static routes for your on-premises CIDR.
-- A set of **VPC endpoints** required for private DRS operation:
-  - Interface endpoints for **AWS DRS**, **EC2**, **SSM**, **SSM Messages**, **EC2 Messages**, **CloudWatch Logs**, and **Secrets Manager**.
-  - A gateway endpoint for **Amazon S3** for replication-related downloads.
-- An optional **Route 53 Resolver inbound endpoint** to support DNS resolution of on-premises hostnames from AWS.
+- A set of **[Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html)** required for private DRS operation:
+  - Interface endpoints for **AWS DRS**, **[Amazon EC2](https://docs.aws.amazon.com/ec2/index.html)**, **[AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html)**, **AWS Systems Manager Messages**, **Amazon EC2 Messages**, **[Amazon CloudWatch Logs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/WhatIsCloudWatchLogs.html)**, and **[AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html)**.
+  - A gateway endpoint for **[Amazon S3](https://docs.aws.amazon.com/s3/index.html)** for replication-related downloads.
+- An optional **[Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) inbound endpoint** to support DNS resolution of on-premises hostnames from AWS.
 - An optional **Windows validation instance**:
-  - Deployed into the target VPC with AWS Systems Manager (SSM) access (no public IP).
-  - RDP credentials stored in AWS Secrets Manager.
+  - Deployed into the target Amazon VPC with [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html) access (no public IP).
+  - RDP credentials stored in [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html).
   - Used for testing connectivity and failback flows.
-- A **DRS initialization Lambda** function and IAM resources that:
+- A **DRS initialization [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html)** function and [AWS IAM](https://docs.aws.amazon.com/iam/index.html) resources that:
   - Optionally call AWS Elastic Disaster Recovery APIs to initialize the service in the Region.
-  - Configure **default replication settings** and a **launch configuration template** using parameters you supply (data plane routing, staging area tags, EBS encryption, and more).
+  - Configure **default replication settings** and a **launch configuration template** using parameters you supply (data plane routing, staging area tags, [Amazon EBS](https://docs.aws.amazon.com/ebs/index.html) encryption, and more).
 
 This environment is not intended to be a complete production reference architecture. You should adapt the architecture design, best practices and parameter values based on your organization’s resilience, security, and compliance requirements.
 
@@ -51,22 +57,22 @@ This environment is not intended to be a complete production reference architect
 
 This diagram illustrates the architecture that this Guidance deploys and how the key components interact.
 
-![Logical diagram](./assets/images/drs-private-base-target-architecture.png)
+![Logical diagram](./assets/drs-private-base-target-architecture.png)
 
 At a high level, the diagram highlights the following:
 
 1. You deploy the [createDRSIAM.yaml](./deployment/createDRSIAM.yaml) template first if AWS Elastic Disaster Recovery has never been initialized in your account, then deploy [DRSPrivateBaseTemplate.yaml](./deployment/DRSPrivateBaseTemplate.yaml) in your chosen AWS account and Region using the AWS Management Console.
 2. The stack creates the AWS Site-to-Site VPN (virtual private gateway, customer gateway, VPN connection, and routes) for private connectivity; you then configure your on-premises VPN device using the downloaded VPN configuration.
-3. Within the target VPC, the stack creates private subnets and the required VPC interface and gateway endpoints (for example, DRS, EC2, S3, SSM, Route 53, CloudWatch Logs, Secrets Manager) so service traffic stays on private connectivity.
-4. A Lambda-backed custom resource initializes AWS Elastic Disaster Recovery and applies default replication and launch configuration settings based on the parameters you specify.
+3. Within the target Amazon VPC, the stack creates private subnets and the required Amazon VPC interface and gateway endpoints (for example, DRS, Amazon EC2, Amazon S3, AWS Systems Manager, Amazon Route 53, Amazon CloudWatch Logs, AWS Secrets Manager) so service traffic stays on private connectivity.
+4. An AWS Lambda-backed custom resource initializes AWS Elastic Disaster Recovery and applies default replication and launch configuration settings based on the parameters you specify.
 5. You install the AWS Replication Agent on selected VMware VMs in your on-premises environment so they register as source servers and can send changed data to AWS.
-6. AWS Elastic Disaster Recovery uses the staging subnet to create replication EC2 servers and EBS staging volumes, and launches recovery EC2 instances and EBS volumes into the recovery subnet when you run drills or failover.
+6. AWS Elastic Disaster Recovery uses the staging subnet to create replication [Amazon EC2](https://docs.aws.amazon.com/ec2/index.html) servers and [Amazon EBS](https://docs.aws.amazon.com/ebs/index.html) staging volumes, and launches recovery Amazon EC2 instances and Amazon EBS volumes into the recovery subnet when you run drills or failover.
 
 As described in the Overview, this architecture is a starting point. You should tailor the network design, parameters, and controls to your organization’s resilience, security, and compliance requirements.
 
 ### Cost
 
-This environment uses multiple AWS services to support AWS Elastic Disaster Recovery, including networking (VPC, VPN, VPC endpoints, Route 53 Resolver), compute (validation instance and recovery instances), storage (EBS), and supporting services such as AWS Secrets Manager and AWS Systems Manager. All costs are incurred based on standard AWS pay-as-you-go pricing in the Region where you deploy the stack.
+This environment uses multiple AWS services to support AWS Elastic Disaster Recovery, including networking ([Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html), [AWS Site-to-Site VPN](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html), [Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html), [Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html)), compute (validation instance and recovery instances), storage ([Amazon EBS](https://docs.aws.amazon.com/ebs/index.html)), and supporting services such as [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html) and [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html). All costs are incurred based on standard AWS pay-as-you-go pricing in the Region where you deploy the stack.
 
 For a detailed, line-item estimate and assumptions, see:
 
@@ -104,7 +110,7 @@ Use this Guidance to deploy the private-connectivity environment described in th
 
 - Deploy the `DRSPrivateBaseTemplate.yaml` template in a dedicated AWS account and Region.
 - Configure your on-premises VPN device by using the tunnel configuration exported by the stack.
-- Confirm basic connectivity (for example, ICMP, DNS, and HTTP/HTTPS where appropriate) between on-premises systems and the target VPC over the VPN or AWS Direct Connect.
+- Confirm basic connectivity (for example, ICMP, DNS, and HTTP/HTTPS where appropriate) between on-premises systems and the target Amazon VPC over the AWS Site-to-Site VPN or AWS Direct Connect.
 
 If you are using Amazon Route 53 Resolver and the optional Windows validation instance, validate that DNS resolution and AWS Systems Manager access work as expected.
 
@@ -160,7 +166,7 @@ In particular:
 
 This structured approach helps you use the infrastructure defined in this Guidance to validate and refine your disaster recovery strategy, while the Prescriptive Guidance document provides the broader context and best practices for adopting AWS Elastic Disaster Recovery end to end.
 
-## Key success criteria and example matrix
+## Key Success Criteria and Example Matrix
 
 This section shows an example of how you can capture configuration details and results when you test AWS Elastic Disaster Recovery in this environment. You can copy and re-use this structure to maintain a separate matrix for each workload, application or server type.
 
@@ -252,16 +258,16 @@ Document how you validate full lifecycle recovery, including returning workloads
 
 Capture qualitative outcomes that do not fit neatly into numeric metrics but are important for adoption and operations.
 
-| Feature / behavior                                             | Expected outcome                                             | Observed outcome |
-| -------------------------------------------------------------- | ------------------------------------------------------------ | ---------------- |
-| Private-only connectivity for replication and control plane    | No dependency on public internet paths                       |                  |
-| Route 53 Resolver behavior (if used)                           | On-premises and AWS workloads resolve required hostnames     |                  |
-| IAM roles and permissions for DRS, Lambda, and endpoints       | Least-privilege access aligned with organizational standards |                  |
-| Operational runbooks for drills, failover, and failback        | Clear, repeatable, and tested                                |                  |
-| Monitoring and alerting integration (for example, EventBridge) | Operations team can detect and respond to issues promptly    |                  |
-| Stakeholder communication and approval workflow                | Matches expectations defined in the Planning phase           |                  |
+| Feature / behavior                                                                                                                         | Expected outcome                                             | Observed outcome |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ | ---------------- |
+| Private-only connectivity for replication and control plane                                                                                | No dependency on public internet paths                       |                  |
+| Route 53 Resolver behavior (if used)                                                                                                       | On-premises and AWS workloads resolve required hostnames     |                  |
+| IAM roles and permissions for DRS, Lambda, and endpoints                                                                                   | Least-privilege access aligned with organizational standards |                  |
+| Operational runbooks for drills, failover, and failback                                                                                    | Clear, repeatable, and tested                                |                  |
+| Monitoring and alerting integration (for example, [EventBridge](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-what-is.html)) | Operations team can detect and respond to issues promptly    |                  |
+| Stakeholder communication and approval workflow                                                                                            | Matches expectations defined in the Planning phase           |                  |
 
-## AWS Elastic Disaster Recovery configuration guidance
+## AWS Elastic Disaster Recovery Configuration
 
 This section lists the **AWS Elastic Disaster Recovery** configuration options that this Guidance helps you control, and the defaults used in `DRSPrivateBaseTemplate.yaml`. Each item includes links to deeper explanations in the VMware solution guidance and the AWS Elastic Disaster Recovery User Guide.
 
@@ -274,7 +280,7 @@ Through the `InitializeDRS` Lambda-backed custom resource and the template param
 - **Staging area behavior and tags** – which AWS account/Region and subnets host the staging area, and how replication resources are tagged (`StagingAreaTags`, `AdditionalTags`).
 - **Automatic disk coverage** – whether new disks attached to protected servers are automatically added to replication (`AutoReplicateNewDisks`).
 - **Bandwidth throttling** – an optional Mbps limit for replication traffic from source to AWS (`BandwidthThrottling`).
-- **EBS encryption** – whether staging-area EBS volumes use the default AWS-managed key or a customer-managed KMS key (`EbsEncryption`, `EbsEncryptionKeyArn`).
+- **[Amazon EBS](https://docs.aws.amazon.com/ebs/index.html) encryption** – whether staging-area Amazon EBS volumes use the default AWS-managed key or a customer-managed [AWS KMS](https://docs.aws.amazon.com/kms/latest/developerguide/overview.html) key (`EbsEncryption`, `EbsEncryptionKeyArn`).
 - **Default large staging disk type** – EBS volume type used for large staging disks (`DefaultLargeStagingDiskType`).
 - **Daily Point-in-Time (PiT) retention** – the number of **daily** recovery points that AWS Elastic Disaster Recovery retains (`PitPolicyDaily`). This parameter controls only the daily layer; the 10-minute and hourly layers follow AWS Elastic Disaster Recovery defaults.
 
@@ -396,7 +402,325 @@ Use this section together with the **Key success criteria and example matrix** a
 
 This section summarizes what you need in place before deploying `DRSPrivateBaseTemplate.yaml` and onboarding servers to AWS Elastic Disaster Recovery.
 
-### Test data
+### AWS Account
+
+You must deploy this template into an AWS account where you have:
+
+- Access to the **[AWS Management Console](https://docs.aws.amazon.com/awsconsolehelpdocs/latest/gsg/learn-whats-new.html)** (or equivalent automation) to create an [AWS CloudFormation](https://docs.aws.amazon.com/cloudformation/index.html) stack.
+- Permissions to create and manage the resources defined in DRSPrivateBaseTemplate.yaml.
+- Ability to deploy the [createDRSIAM.yaml](./deployment/createDRSIAM.yaml) AWS CloudFormation template if [AWS Elastic Disaster Recovery](https://docs.aws.amazon.com/drs/latest/userguide/what-is-drs.html) has never been initialized in your account.
+
+#### AWS Elastic Disaster Recovery service setup
+
+Before you rely on this environment for disaster recovery:
+
+- Confirm that **AWS Elastic Disaster Recovery** is available and permitted in the Region where you deploy the stack.
+- **If AWS Elastic Disaster Recovery has never been initialized in your AWS account**, you must first deploy the [createDRSIAM.yaml](./deployment/createDRSIAM.yaml) CloudFormation template. This template creates the required IAM service-linked roles and permissions that AWS Elastic Disaster Recovery needs to operate in your account. Deploy this template **before** deploying `DRSPrivateBaseTemplate.yaml`.
+- Decide whether you want the template to **initialize AWS Elastic Disaster Recovery for you** or if you will configure it manually:
+  - InitializeDRS = Yes (default): the ElasticDisasterRecoveryServiceInitializationFunction [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) function:
+    - Calls drs:InitializeService if needed.
+    - Applies default replication and launch configuration settings based on the parameters in this template.
+  - InitializeDRS = No: the template does not change AWS Elastic Disaster Recovery settings; you must configure replication and launch templates directly in the DRS console or via your own automation.
+
+For broader service setup and workflows, see:
+
+- What is AWS Elastic Disaster Recovery?
+- [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
+- [Installation](PrescriptiveGuidance_ElasticDisasterRecovery.md#installation)
+
+### AWS Region
+
+AWS Elastic Disaster Recovery is available in multiple AWS Regions. Confirm that the service is available in your target Region before deployment.
+
+For the full list of supported regions, view the [AWS Elastic Disaster Recovery User Guide](https://docs.aws.amazon.com/drs/latest/userguide/what-is-drs.html).
+
+### AWS Permissions
+
+You must have permissions to create and manage the resources defined in DRSPrivateBaseTemplate.yaml, including (but not limited to):
+
+- **Networking**: [Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html), subnets, route tables, [AWS Site-to-Site VPN gateway](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html), customer gateway, VPN connection, [Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html), security groups, and routes.
+- **Name resolution and secrets**: [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html) secrets (for credentials) and [Amazon Route 53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/Welcome.html) / [Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) resources (if CreateRoute53Resolver = "yes").
+- **Compute and management**: [Amazon EC2](https://docs.aws.amazon.com/ec2/index.html) instances (for the optional Windows validation instance), [AWS IAM](https://docs.aws.amazon.com/iam/index.html) roles and instance profiles, [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) functions, and [AWS CloudFormation](https://docs.aws.amazon.com/cloudformation/index.html) custom resources.
+- **AWS Elastic Disaster Recovery service roles and APIs**: ability to:
+  - Create roles that attach the AWS-managed Elastic Disaster Recovery policies (for example, AWSElasticDisasterRecoveryReplicationServerPolicy, AWSElasticDisasterRecoveryRecoveryInstancePolicy).
+  - Allow the initialization Lambda to call DRS APIs such as drs:InitializeService, drs:CreateReplicationConfigurationTemplate, and drs:CreateLaunchConfigurationTemplate.
+  - Use iam:PassRole for the roles referenced by the Lambda and DRS service.
+
+If you want to validate your permissions from a Linux/macOS shell, you can use aws iam simulate-principal-policy with your current identity.
+
+Get the caller identity ARN:
+
+`MYARN="$(aws sts get-caller-identity --query Arn --output text)"`
+
+`echo "$MYARN"`
+
+Core CloudFormation & IAM pass role:
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "cloudformation:CreateStack" "cloudformation:DescribeStacks" | grep -i decision`
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "iam:CreateRole" "iam:CreateInstanceProfile" "iam:AttachRolePolicy" "iam:PassRole" | grep -i decision`
+
+Networking (VPC, VPN, endpoints, security groups):
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "ec2:CreateVpc" "ec2:CreateSubnet" "ec2:CreateRouteTable" "ec2:CreateRoute" "ec2:CreateSecurityGroup" "ec2:CreateTags" "ec2:CreateVpcEndpoint" "ec2:CreateCustomerGateway" "ec2:CreateVpnGateway" "ec2:CreateVpnConnection" "ec2:ModifyVpcAttribute" | grep -i decision`
+
+Compute, Lambda, and Secrets Manager:
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "ec2:RunInstances" "lambda:CreateFunction" "lambda:UpdateFunctionCode" "lambda:AddPermission" "secretsmanager:CreateSecret" "secretsmanager:PutSecretValue" | grep -i decision`
+
+Route 53 and Route 53 Resolver (if enabled):
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "route53:CreateHostedZone" "route53:ChangeResourceRecordSets" "route53resolver:CreateResolverEndpoint" | grep -i decision`
+
+AWS Elastic Disaster Recovery APIs:
+
+`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "drs:InitializeService" "drs:CreateReplicationConfigurationTemplate" "drs:CreateLaunchConfigurationTemplate" "drs:GetReplicationConfiguration" "drs:GetLaunchConfiguration" "drs:DescribeSourceServers" | grep -i decision`
+
+These commands are **examples** you can adapt; they do not cover every action in the template but help you quickly confirm that your principal is broadly authorized to create the core networking, IAM, Lambda, Secrets Manager, Route 53, and DRS resources required by DRSPrivateBaseTemplate.yaml.
+
+### On-premises VMware environment
+
+This Guidance is designed for **on-premises VMware vSphere** environments. Before you start:
+
+- Ensure you have:
+  - A supported vSphere and vCenter version.
+  - VMware VMs running supported Windows or Linux operating systems.
+  - Administrative access to install the **AWS Replication Agent** on source servers.
+- Confirm that your on-premises environment meets the **technical prerequisites** and **network requirements** described in the Prescriptive Guidance and AWS Elastic Disaster Recovery User Guide (for example, bandwidth, ports, and staging subnet requirements).
+
+For detailed requirements, review:
+
+- [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
+- [Network requirements – AWS Elastic Disaster Recovery User Guide](https://docs.aws.amazon.com/drs/latest/userguide/Network-Requirements.html)
+
+### Networking and connectivity (staging VPC)
+
+This Guidance creates the **AWS-side network foundation** (a staging VPC) for private-only DRS traffic:
+
+- A dedicated **[Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html)** using TargetVpcCidrBlock (default 192.168.100.0/22).
+- **Private subnets** (PrivateSubnet0, PrivateSubnet1) and **public subnets** (PublicSubnet0, PublicSubnet1).
+  - PrivateSubnet0 is used as the **staging subnet** for AWS Elastic Disaster Recovery (replication servers and staging disks).
+- **Route tables** and routes for the private and public subnets.
+- An **[AWS Site-to-Site VPN](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html)**:
+  - Virtual private gateway (VGW) attached to the Amazon VPC.
+  - Customer gateway (CGW) using your on-premises public IP (OnPremPublicIP).
+  - VPN connection with **static routes** to your on-premises CIDR (OnPremCidrBlock).
+- **[Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html)**:
+  - [Amazon S3](https://docs.aws.amazon.com/s3/index.html) **gateway** endpoint and **interface** endpoint.
+  - Interface endpoints for **[AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html)**, **AWS Systems Manager Messages**, **Amazon EC2 Messages**, **[Amazon EC2](https://docs.aws.amazon.com/ec2/index.html)**, **[Amazon CloudWatch Logs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/WhatIsCloudWatchLogs.html)**, **AWS DRS**, and **[AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html)**.
+- **Security groups** for:
+  - Amazon VPC endpoints, staging resources, recovered instances, optional Windows validation instance, and optional [Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) inbound endpoint.
+
+The template does **not** create an [Internet Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html) or [NAT Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html). All outbound connectivity for replication and control-plane traffic uses:
+
+- The AWS Site-to-Site VPN or [AWS Direct Connect](https://docs.aws.amazon.com/directconnect/latest/UserGuide/Welcome.html) path, and
+- Amazon VPC endpoints to reach Amazon S3, AWS DRS, Amazon EC2, AWS Systems Manager, Amazon CloudWatch Logs, and AWS Secrets Manager.
+
+On the **on-premises** side, you must:
+
+- Own or control the static public IP used as OnPremPublicIP.
+- Ensure OnPremCidrBlock does **not overlap** with TargetVpcCidrBlock.
+- Configure your VPN device with the tunnel configuration generated by the stack.
+- Allow at least:
+  - **TCP 443** between source servers and AWS DRS/VPC endpoints.
+  - **TCP 1500** between source servers and the staging subnet (DRS data replication channel).
+
+For background, see: [Technical Prerequisites – Network requirements](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
+
+#### Testing connectivity to Amazon VPC endpoints (TCP 443)
+
+To verify connectivity from on-premises servers to the Amazon VPC endpoints:
+
+1. In the AWS Management Console, go to **Amazon VPC → Endpoints**.
+2. Select the endpoint you want to test (for example, the Amazon S3 or AWS DRS interface endpoint).
+3. Copy one of the **DNS names** (for example,vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com).
+
+If you have nc/netcat available (Linux, or Windows with netcat installed):
+
+`nc -vz vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com 443`
+
+A successful connection shows output such as succeeded (exact wording depends on your nc version).
+
+On Windows without netcat, you can use PowerShell:
+
+`Test-NetConnection -ComputerName "vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com" -Port 443`
+
+Repeat this for key endpoints such as Amazon S3 and AWS DRS.
+
+#### Testing connectivity on TCP 1500 using the Windows validation instance
+
+By default, DRS data replication flows from source servers to the staging subnet over **TCP 1500**. To validate that this path works end-to-end, you can:
+
+1. Deploy the template with CreateWindowsInstance = "yes".
+2. Connect to the **Windows validation instance** in PrivateSubnet0.
+3. Start a simple TCP listener on **port 1500** on the Windows validation instance.
+4. From an on-premises server, attempt to connect to that listener over port 1500.
+
+On the Windows validation instance (PowerShell – start a TCP listener on port 1500):
+
+```
+$port = 1500
+$listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $port)
+$listener.Start()
+Write-Host "Listening on port $port ..."
+
+$client = $listener.AcceptTcpClient()
+Write-Host "Connection received from $($client.Client.RemoteEndPoint)"
+
+# To keep listening for additional tests, you can wrap AcceptTcpClient in a loop.
+```
+
+From an on-premises Linux server (test connectivity to the Windows validation instance private IP):
+
+`nc -vz <WindowsValidationInstancePrivateIP> 1500`
+
+From an on-premises Windows server (without netcat):
+
+`Test-NetConnection -ComputerName "<WindowsValidationInstancePrivateIP>" -Port 1500`
+
+A successful test confirms that:
+
+- VPN routing is working end to end.
+- Security groups and network ACLs permit the required DRS data channel path on TCP 1500.
+
+### Operating system and validation instance
+
+Your **source servers** (VMware VMs) must run supported Windows or Linux OS versions for the AWS Replication Agent. See the AWS Elastic Disaster Recovery User Guide for the most up-to-date matrix of supported operating systems.
+
+This template can optionally deploy a **Windows validation instance** in the **staging Amazon VPC**:
+
+- Controlled by CreateWindowsInstance (default "yes").
+- Uses the latest Windows Server 2019 [Amazon Machine Image (AMI)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AMIs.html) from the public [AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html).
+- Launches as a t3.small instance in PrivateSubnet0 (the staging subnet).
+- Uses [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html) (via the AmazonSSMManagedInstanceCore policy) instead of a public IP.
+- Retrieves RDP credentials from the DRSCredentialsSecret secret, which is populated from the RDPUsername and RDPPassword parameters.
+
+If you enable the validation instance:
+
+- Provide an RDPPassword that meets Windows password complexity requirements.
+- Ensure your organization permits Windows Server usage in the chosen Region.
+
+## Template deployment steps
+
+### Deploying the private DRS environment using CloudFormation
+
+Deploy the CloudFormation templates from this repository:
+
+| Template                                                                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [createDRSIAM.yaml](./deployment/createDRSIAM.yaml)                     | **Deploy this first if AWS Elastic Disaster Recovery has never been initialized in your account.** Creates the required [AWS IAM](https://docs.aws.amazon.com/iam/index.html) service-linked roles and permissions for AWS Elastic Disaster Recovery to operate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| [DRSPrivateBaseTemplate.yaml](./deployment/DRSPrivateBaseTemplate.yaml) | Creates a dedicated staging [Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html) (with private and public subnets), [AWS Site-to-Site VPN](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html) components (VGW, CGW, VPN connection), required [Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html) for private-only operation, optional Windows validation instance, optional [Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) inbound endpoint, and an [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) function that can initialize AWS Elastic Disaster Recovery and apply default replication and launch configuration settings. |
+
+This template prepares the AWS-side environment. It does not install the AWS Replication Agent or create replication servers. Those are created later when you onboard source servers into AWS Elastic Disaster Recovery, as described in [PrescriptiveGuidance_ElasticDisasterRecovery.md](PrescriptiveGuidance_ElasticDisasterRecovery.md).
+
+1.  Open the [AWS CloudFormation console](https://console.aws.amazon.com/cloudformation) and choose Create stack → With new resources (standard).
+2.  Under Specify template, choose Upload a template file and select DRSPrivateBaseTemplate.yaml from this repository.
+3.  Provide a stack name, for example drs-private-base-target, and set parameters as described in Template parameters below.
+4.  Choose Next, optionally add stack tags, then review the configuration, acknowledge required capabilities, and choose Create stack.
+5.  Wait for the stack to reach CREATE_COMPLETE.
+6.  In the Outputs tab, record the values listed under Stack outputs below for later steps and connectivity checks.
+
+---
+
+### Template parameters (reference)
+
+#### Core networking and environment parameters
+
+| Parameter             | Purpose                                                                                           | Suggested value or default                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| TargetVpcCidrBlock    | CIDR block for the VPC used as the DRS staging or target environment.                             | 192.168.100.0/22 (adjust to fit your IP plan)                                                                      |
+| OnPremPublicIP        | Static public IP address of your on-premises VPN device.                                          | Your on-premises VPN device public IP                                                                              |
+| OnPremCidrBlock       | CIDR block of your on-premises network reachable over the VPN.                                    | Your on-premises CIDR (must not overlap with VPC CIDR)                                                             |
+| CreateWindowsInstance | Whether to create a Windows validation instance in PrivateSubnet0.                                | Yes in most deployments where you want a built-in instance for connectivity and application validation; No to skip |
+| RDPUsername           | Username for RDP access to the Windows validation instance (if created).                          | An admin username such as drsadmin                                                                                 |
+| RDPPassword           | Password for RDP access (only required if CreateWindowsInstance is set to yes).                   | Strong password meeting Windows complexity rules                                                                   |
+| CreateRoute53Resolver | Whether to create a Route 53 Resolver inbound endpoint to resolve on-premises hostnames from AWS. | yes if you need DNS from AWS to on-prem; otherwise no                                                              |
+
+---
+
+#### DRS initialization and core behavior
+
+| Parameter                     | Purpose                                                                                                                                                                                                    | Suggested value or default                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| InitializeDRS                 | Initialize AWS Elastic Disaster Recovery in this Region and create default replication and launch configuration templates.                                                                                 | Yes if DRS is not already initialized                |
+| DataPlaneRouting              | Routing mechanism for replication traffic.                                                                                                                                                                 | PRIVATE_IP to keep traffic on private connectivity   |
+| BandwidthThrottling           | Maximum bandwidth (Mbps) used by the DRS replication data plane.                                                                                                                                           | 0 (no throttling) for tests; tune if needed          |
+| AutoReplicateNewDisks         | Automatically include newly attached disks on protected servers in replication.                                                                                                                            | True                                                 |
+| AssociateDefaultSecurityGroup | Associate the default security group for replication servers and staging disks.                                                                                                                            | True (you can tighten later)                         |
+| EbsEncryption                 | Controls whether [Amazon EBS](https://docs.aws.amazon.com/ebs/index.html) volumes use default encryption or a specific [AWS KMS](https://docs.aws.amazon.com/kms/latest/developerguide/overview.html) key. | DEFAULT for most environments                        |
+| EbsEncryptionKeyArn           | AWS KMS key ARN to use when a custom encryption key is required.                                                                                                                                           | Leave blank to use the default key, or specify a CMK |
+| PitPolicyDaily                | Number of days to retain daily points-in-time for recovery.                                                                                                                                                | 7 (can be adjusted between 1 and 365)                |
+
+---
+
+#### Replication server and tagging parameters
+
+| Parameter                     | Purpose                                                                               | Suggested value or default                                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ReplicationServerInstanceType | EC2 instance type used for replication servers.                                       | t3.small as a good default for small-scale or initial deployments; increase size for higher-throughput or larger-scale environments                                              |
+| UseDedicatedReplicationServer | Use a dedicated replication server per source server instead of sharing.              | False for most deployments; set to True only when you require a dedicated replication server per source server (for example, for specific performance or isolation requirements) |
+| StagingAreaTags               | Tags applied to staging area resources such as replication servers and staging disks. | For example, Resource=StagingArea                                                                                                                                                |
+| AdditionalTags                | Additional tags applied to staging resources.                                         | For example, Project=DisasterRecovery                                                                                                                                            |
+| CopyTags                      | Copy tags from source servers to recovery instances.                                  | False initially (enable later if needed)                                                                                                                                         |
+| CopyPrivateIp                 | Copy private IP from source to recovery instance where possible.                      | False by default; enable only if your network design requires preserving source private IP addresses on recovery instances.                                                      |
+
+---
+
+#### Launch configuration and target instance behavior
+
+| Parameter                           | Purpose                                                                                   | Suggested value or default                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| LaunchDisposition                   | Whether recovery instances are started or left stopped after launch.                      | STARTED for interactive testing                                                                              |
+| TargetInstanceTypeRightSizingMethod | Whether to right-size recovery instances based on observed characteristics.               | NONE initially; consider BASIC or IN_AWS later                                                               |
+| TargetInstanceType                  | EC2 instance type for recovery instances when right-sizing is set to NONE.                | t3.small or another instance type that matches your workload’s performance and disaster recovery objectives. |
+| OsByol                              | Enable Bring-Your-Own-License behavior for supported operating systems.                   | False unless you require BYOL                                                                                |
+| PostLaunchEnabled                   | Enable post-launch actions (for example, SSM Automation runbooks) for recovery instances. | True                                                                                                         |
+| TargetTags                          | Tags applied to recovery instances created by DRS.                                        | For example, Resource=Target                                                                                 |
+
+---
+
+#### Stack outputs
+
+After the stack reaches CREATE_COMPLETE, use the Outputs tab to capture key values.
+
+| Output                                  | Description                                                          | What you might use it for                                      |
+| --------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------- |
+| VpcId                                   | ID of the created VPC.                                               | Network checks and future subnet or endpoint additions         |
+| PrivateSubnetId0                        | ID of private subnet 0 (staging subnet).                             | Staging subnet for replication servers and validation instance |
+| PrivateSubnetId1                        | ID of private subnet 1.                                              | Additional private capacity or multi-AZ patterns               |
+| PrivateRouteTableId                     | ID of the private route table.                                       | Verifying routes to VPN and VPC endpoints                      |
+| WebSecurityGroupId                      | Security group used by the Windows validation instance.              | Adjusting inbound rules for validation and troubleshooting     |
+| RecoveredInstanceSecurityGroupId        | Security group intended for recovered instances.                     | Hardening access to recovery workloads                         |
+| DrsEndpointDNS or DrsEndpointDnsEntries | DNS name or names for the DRS interface endpoint.                    | Connectivity tests from on-premises to the DRS endpoint        |
+| S3InterfaceEndpointDnsEntries           | DNS entries for the S3 interface endpoint.                           | Connectivity tests to S3 via private connectivity              |
+| SecretsManagerSecret                    | Name of the AWS Secrets Manager secret that stores RDP credentials.  | Connecting securely to the Windows validation instance         |
+| ResolverInboundEndpointIPs              | IP addresses of the Route 53 Resolver inbound endpoint (if created). | On-premises DNS forwarder configuration                        |
+| ResolverInboundEndpointId               | ID of the Route 53 Resolver inbound endpoint (if created).           | Operations and troubleshooting in Route 53 Resolver            |
+
+---
+
+### Post-deploy: connect on-premises and validate
+
+After the stack is deployed:
+
+- Configure your VPN device using the downloaded Site-to-Site VPN configuration, and verify that routes between OnPremCidrBlock and TargetVpcCidrBlock are active.
+- From on-premises, resolve and test connectivity to key VPC endpoint DNS names (for example, S3, DRS, EC2, SSM) to confirm that traffic stays on the private path (VPN or Direct Connect).
+- Use PrivateSubnetId0 and RecoveredInstanceSecurityGroupId to validate that staging resources and recovered instances can reach required AWS services via VPC endpoints, and that on-premises servers can reach the staging subnet on required ports such as TCP 1500.
+- If InitializeDRS is set to Yes, review the default replication and launch configuration templates in the AWS Elastic Disaster Recovery console and align them with the guidance in the AWS Elastic Disaster Recovery configuration guidance section and the Planning, Technical Prerequisites, Installation, Drill Planning, and Invoking Recovery sections of PrescriptiveGuidance_ElasticDisasterRecovery.md:
+  - [Planning](PrescriptiveGuidance_ElasticDisasterRecovery.md#planning)
+  - [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
+  - [Installation](PrescriptiveGuidance_ElasticDisasterRecovery.md#installation)
+  - [Drill Planning](PrescriptiveGuidance_ElasticDisasterRecovery.md#drill-planning)
+  - [Invoking Recovery](PrescriptiveGuidance_ElasticDisasterRecovery.md#invoking-recovery)
+- Onboard one or more test servers by installing the AWS Replication Agent on selected VMware VMs, starting replication over the VPN to the staging subnet, and launching recovery instances into the staging VPC to run drills or test failovers.
+
+These steps complete deployment of the Guidance template and prepare the environment for the detailed workflows (planning, onboarding, drills, failover, and failback) described in PrescriptiveGuidance_ElasticDisasterRecovery.md.
+
+## Deployment Validation
+
+You can validate a successful deployment by navigating to the [AWS CloudFormation console](https://console.aws.amazon.com/cloudformation) and verifying that the stack status is **CREATE_COMPLETE**.
+
+### Test Data
 
 These files give you a simple, repeatable way to verify that new data is replicated and to get an intuitive feel for RPO and change rates when you monitor AWS Elastic Disaster Recovery metrics and logs.
 
@@ -496,312 +820,6 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
 ```
 
 These files give you a simple, repeatable way to verify that new data is replicated and to get an intuitive feel for RPO and change rates when you monitor AWS Elastic Disaster Recovery metrics and logs.
-
-### On-premises VMware environment
-
-This Guidance is designed for **on-premises VMware vSphere** environments. Before you start:
-
-- Ensure you have:
-  - A supported vSphere and vCenter version.
-  - VMware VMs running supported Windows or Linux operating systems.
-  - Administrative access to install the **AWS Replication Agent** on source servers.
-- Confirm that your on-premises environment meets the **technical prerequisites** and **network requirements** described in the Prescriptive Guidance and AWS Elastic Disaster Recovery User Guide (for example, bandwidth, ports, and staging subnet requirements).
-
-For detailed requirements, review:
-
-- [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
-- [Network requirements – AWS Elastic Disaster Recovery User Guide](https://docs.aws.amazon.com/drs/latest/userguide/Network-Requirements.html)
-
-### Networking and connectivity (staging VPC)
-
-This Guidance creates the **AWS-side network foundation** (a staging VPC) for private-only DRS traffic:
-
-- A dedicated **VPC** using TargetVpcCidrBlock (default 192.168.100.0/22).
-- **Private subnets** (PrivateSubnet0, PrivateSubnet1) and **public subnets** (PublicSubnet0, PublicSubnet1).
-  - PrivateSubnet0 is used as the **staging subnet** for AWS Elastic Disaster Recovery (replication servers and staging disks).
-- **Route tables** and routes for the private and public subnets.
-- An **AWS Site-to-Site VPN**:
-  - Virtual private gateway (VGW) attached to the VPC.
-  - Customer gateway (CGW) using your on-premises public IP (OnPremPublicIP).
-  - VPN connection with **static routes** to your on-premises CIDR (OnPremCidrBlock).
-- **VPC endpoints**:
-  - S3 **gateway** endpoint and **interface** endpoint.
-  - Interface endpoints for **SSM**, **SSM Messages**, **EC2 Messages**, **EC2**, **CloudWatch Logs**, **DRS**, and **Secrets Manager**.
-- **Security groups** for:
-  - VPC endpoints, staging resources, recovered instances, optional Windows validation instance, and optional Route 53 Resolver inbound endpoint.
-
-The template does **not** create an Internet Gateway or NAT Gateway. All outbound connectivity for replication and control-plane traffic uses:
-
-- The Site-to-Site VPN or Direct Connect path, and
-- VPC endpoints to reach S3, DRS, EC2, SSM, CloudWatch Logs, and Secrets Manager.
-
-On the **on-premises** side, you must:
-
-- Own or control the static public IP used as OnPremPublicIP.
-- Ensure OnPremCidrBlock does **not overlap** with TargetVpcCidrBlock.
-- Configure your VPN device with the tunnel configuration generated by the stack.
-- Allow at least:
-  - **TCP 443** between source servers and AWS DRS/VPC endpoints.
-  - **TCP 1500** between source servers and the staging subnet (DRS data replication channel).
-
-For background, see: [Technical Prerequisites – Network requirements](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
-
-#### Testing connectivity to VPC endpoints (TCP 443)
-
-To verify connectivity from on-premises servers to the VPC endpoints:
-
-1. In the AWS Management Console, go to **VPC → Endpoints**.
-2. Select the endpoint you want to test (for example, the S3 or DRS interface endpoint).
-3. Copy one of the **DNS names** (for example,vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com).
-
-If you have nc/netcat available (Linux, or Windows with netcat installed):
-
-`nc -vz vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com 443`
-
-A successful connection shows output such as succeeded (exact wording depends on your nc version).
-
-On Windows without netcat, you can use PowerShell:
-
-`Test-NetConnection -ComputerName "vpce-abcdefghijklmnopq-12345678.s3.us-west-2.vpce.amazonaws.com" -Port 443`
-
-Repeat this for key endpoints such as S3 and DRS.
-
-#### Testing connectivity on TCP 1500 using the Windows validation instance
-
-By default, DRS data replication flows from source servers to the staging subnet over **TCP 1500**. To validate that this path works end-to-end, you can:
-
-1. Deploy the template with CreateWindowsInstance = "yes".
-2. Connect to the **Windows validation instance** in PrivateSubnet0.
-3. Start a simple TCP listener on **port 1500** on the Windows validation instance.
-4. From an on-premises server, attempt to connect to that listener over port 1500.
-
-On the Windows validation instance (PowerShell – start a TCP listener on port 1500):
-
-```
-$port = 1500
-$listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $port)
-$listener.Start()
-Write-Host "Listening on port $port ..."
-
-$client = $listener.AcceptTcpClient()
-Write-Host "Connection received from $($client.Client.RemoteEndPoint)"
-
-# To keep listening for additional tests, you can wrap AcceptTcpClient in a loop.
-```
-
-From an on-premises Linux server (test connectivity to the Windows validation instance private IP):
-
-`nc -vz <WindowsValidationInstancePrivateIP> 1500`
-
-From an on-premises Windows server (without netcat):
-
-`Test-NetConnection -ComputerName "<WindowsValidationInstancePrivateIP>" -Port 1500`
-
-A successful test confirms that:
-
-- VPN routing is working end to end.
-- Security groups and network ACLs permit the required DRS data channel path on TCP 1500.
-
-### AWS Elastic Disaster Recovery service setup
-
-Before you rely on this environment for disaster recovery:
-
-- Confirm that **AWS Elastic Disaster Recovery** is available and permitted in the Region where you deploy the stack.
-- **If AWS Elastic Disaster Recovery has never been initialized in your AWS account**, you must first deploy the [createDRSIAM.yaml](./deployment/createDRSIAM.yaml) CloudFormation template. This template creates the required IAM service-linked roles and permissions that AWS Elastic Disaster Recovery needs to operate in your account. Deploy this template **before** deploying `DRSPrivateBaseTemplate.yaml`.
-- Decide whether you want the template to **initialize AWS Elastic Disaster Recovery for you** or if you will configure it manually:
-  - InitializeDRS = Yes (default): the ElasticDisasterRecoveryServiceInitializationFunction Lambda function:
-    - Calls drs:InitializeService if needed.
-    - Applies default replication and launch configuration settings based on the parameters in this template.
-  - InitializeDRS = No: the template does not change AWS Elastic Disaster Recovery settings; you must configure replication and launch templates directly in the DRS console or via your own automation.
-
-For broader service setup and workflows, see:
-
-- What is AWS Elastic Disaster Recovery?
-- [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
-- [Installation](PrescriptiveGuidance_ElasticDisasterRecovery.md#installation)
-
-### Operating system and validation instance
-
-Your **source servers** (VMware VMs) must run supported Windows or Linux OS versions for the AWS Replication Agent. See the AWS Elastic Disaster Recovery User Guide for the most up-to-date matrix of supported operating systems.
-
-This template can optionally deploy a **Windows validation instance** in the **staging VPC**:
-
-- Controlled by CreateWindowsInstance (default "yes").
-- Uses the latest Windows Server 2019 AMI from the public SSM parameter store.
-- Launches as a t3.small instance in PrivateSubnet0 (the staging subnet).
-- Uses AWS Systems Manager (via the AmazonSSMManagedInstanceCore policy) instead of a public IP.
-- Retrieves RDP credentials from the DRSCredentialsSecret secret, which is populated from the RDPUsername and RDPPassword parameters.
-
-If you enable the validation instance:
-
-- Provide an RDPPassword that meets Windows password complexity requirements.
-- Ensure your organization permits Windows Server usage in the chosen Region.
-
-### AWS account and IAM requirements
-
-You must deploy this template into an AWS account where you have:
-
-- Access to the **AWS Management Console** (or equivalent automation) to create a CloudFormation stack.
-- Permissions to create and manage the resources defined in DRSPrivateBaseTemplate.yaml, including (but not limited to):
-  - **Networking**: VPC, subnets, route tables, VPN gateway, customer gateway, VPN connection, VPC endpoints, security groups, and routes.
-  - **Name resolution and secrets**: AWS Secrets Manager secrets (for credentials) and Route 53 / Route 53 Resolver resources (if CreateRoute53Resolver = "yes").
-  - **Compute and management**: EC2 instances (for the optional Windows validation instance), IAM roles and instance profiles, Lambda functions, and CloudFormation custom resources.
-  - **AWS Elastic Disaster Recovery service roles and APIs**: ability to:
-    - Create roles that attach the AWS-managed Elastic Disaster Recovery policies (for example, AWSElasticDisasterRecoveryReplicationServerPolicy, AWSElasticDisasterRecoveryRecoveryInstancePolicy).
-    - Allow the initialization Lambda to call DRS APIs such as drs:InitializeService, drs:CreateReplicationConfigurationTemplate, and drs:CreateLaunchConfigurationTemplate.
-    - Use iam:PassRole for the roles referenced by the Lambda and DRS service.
-
-If you want to validate your permissions from a Linux/macOS shell (similar to the AWS Backup README), you can use aws iam simulate-principal-policy with your current identity.
-
-Get the caller identity ARN:
-
-`MYARN="$(aws sts get-caller-identity --query Arn --output text)"`
-
-`echo "$MYARN"`
-
-Core CloudFormation & IAM pass role:
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "cloudformation:CreateStack" "cloudformation:DescribeStacks" | grep -i decision`
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "iam:CreateRole" "iam:CreateInstanceProfile" "iam:AttachRolePolicy" "iam:PassRole" | grep -i decision`
-
-Networking (VPC, VPN, endpoints, security groups):
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "ec2:CreateVpc" "ec2:CreateSubnet" "ec2:CreateRouteTable" "ec2:CreateRoute" "ec2:CreateSecurityGroup" "ec2:CreateTags" "ec2:CreateVpcEndpoint" "ec2:CreateCustomerGateway" "ec2:CreateVpnGateway" "ec2:CreateVpnConnection" "ec2:ModifyVpcAttribute" | grep -i decision`
-
-Compute, Lambda, and Secrets Manager:
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "ec2:RunInstances" "lambda:CreateFunction" "lambda:UpdateFunctionCode" "lambda:AddPermission" "secretsmanager:CreateSecret" "secretsmanager:PutSecretValue" | grep -i decision`
-
-Route 53 and Route 53 Resolver (if enabled):
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "route53:CreateHostedZone" "route53:ChangeResourceRecordSets" "route53resolver:CreateResolverEndpoint" | grep -i decision`
-
-AWS Elastic Disaster Recovery APIs:
-
-`aws iam simulate-principal-policy --policy-source-arn "$MYARN" --action-names "drs:InitializeService" "drs:CreateReplicationConfigurationTemplate" "drs:CreateLaunchConfigurationTemplate" "drs:GetReplicationConfiguration" "drs:GetLaunchConfiguration" "drs:DescribeSourceServers" | grep -i decision`
-
-These commands are **examples** you can adapt; they do not cover every action in the template but help you quickly confirm that your principal is broadly authorized to create the core networking, IAM, Lambda, Secrets Manager, Route 53, and DRS resources required by DRSPrivateBaseTemplate.yaml.
-
-## Template deployment steps
-
-### Deploying the private DRS environment using CloudFormation
-
-Deploy the CloudFormation templates from this repository:
-
-| Template                                                                | Description                                                                                                                                                                                                                                                                                                                                                                                               |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [createDRSIAM.yaml](./deployment/createDRSIAM.yaml)                     | **Deploy this first if AWS Elastic Disaster Recovery has never been initialized in your account.** Creates the required IAM service-linked roles and permissions for AWS Elastic Disaster Recovery to operate.                                                                                                                                                                                            |
-| [DRSPrivateBaseTemplate.yaml](./deployment/DRSPrivateBaseTemplate.yaml) | Creates a dedicated staging VPC (with private and public subnets), Site-to-Site VPN components (VGW, CGW, VPN connection), required VPC endpoints for private-only operation, optional Windows validation instance, optional Route 53 Resolver inbound endpoint, and a Lambda function that can initialize AWS Elastic Disaster Recovery and apply default replication and launch configuration settings. |
-
-This template prepares the AWS-side environment. It does not install the AWS Replication Agent or create replication servers. Those are created later when you onboard source servers into AWS Elastic Disaster Recovery, as described in [PrescriptiveGuidance_ElasticDisasterRecovery.md](PrescriptiveGuidance_ElasticDisasterRecovery.md).
-
-1.  Open the AWS CloudFormation console and choose Create stack → With new resources (standard).
-2.  Under Specify template, choose Upload a template file and select DRSPrivateBaseTemplate.yaml from this repository.
-3.  Provide a stack name, for example drs-private-base-target, and set parameters as described in Template parameters below.
-4.  Choose Next, optionally add stack tags, then review the configuration, acknowledge required capabilities, and choose Create stack.
-5.  Wait for the stack to reach CREATE_COMPLETE.
-6.  In the Outputs tab, record the values listed under Stack outputs below for later steps and connectivity checks.
-
----
-
-### Template parameters (reference)
-
-#### Core networking and environment parameters
-
-| Parameter             | Purpose                                                                                           | Suggested value or default                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| TargetVpcCidrBlock    | CIDR block for the VPC used as the DRS staging or target environment.                             | 192.168.100.0/22 (adjust to fit your IP plan)                                                                      |
-| OnPremPublicIP        | Static public IP address of your on-premises VPN device.                                          | Your on-premises VPN device public IP                                                                              |
-| OnPremCidrBlock       | CIDR block of your on-premises network reachable over the VPN.                                    | Your on-premises CIDR (must not overlap with VPC CIDR)                                                             |
-| CreateWindowsInstance | Whether to create a Windows validation instance in PrivateSubnet0.                                | Yes in most deployments where you want a built-in instance for connectivity and application validation; No to skip |
-| RDPUsername           | Username for RDP access to the Windows validation instance (if created).                          | An admin username such as drsadmin                                                                                 |
-| RDPPassword           | Password for RDP access (only required if CreateWindowsInstance is set to yes).                   | Strong password meeting Windows complexity rules                                                                   |
-| CreateRoute53Resolver | Whether to create a Route 53 Resolver inbound endpoint to resolve on-premises hostnames from AWS. | yes if you need DNS from AWS to on-prem; otherwise no                                                              |
-
----
-
-#### DRS initialization and core behavior
-
-| Parameter                     | Purpose                                                                                                                    | Suggested value or default                           |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| InitializeDRS                 | Initialize AWS Elastic Disaster Recovery in this Region and create default replication and launch configuration templates. | Yes if DRS is not already initialized                |
-| DataPlaneRouting              | Routing mechanism for replication traffic.                                                                                 | PRIVATE_IP to keep traffic on private connectivity   |
-| BandwidthThrottling           | Maximum bandwidth (Mbps) used by the DRS replication data plane.                                                           | 0 (no throttling) for tests; tune if needed          |
-| AutoReplicateNewDisks         | Automatically include newly attached disks on protected servers in replication.                                            | True                                                 |
-| AssociateDefaultSecurityGroup | Associate the default security group for replication servers and staging disks.                                            | True (you can tighten later)                         |
-| EbsEncryption                 | Controls whether EBS volumes use default encryption or a specific KMS key.                                                 | DEFAULT for most environments                        |
-| EbsEncryptionKeyArn           | KMS key ARN to use when a custom encryption key is required.                                                               | Leave blank to use the default key, or specify a CMK |
-| PitPolicyDaily                | Number of days to retain daily points-in-time for recovery.                                                                | 7 (can be adjusted between 1 and 365)                |
-
----
-
-#### Replication server and tagging parameters
-
-| Parameter                     | Purpose                                                                               | Suggested value or default                                                                                                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ReplicationServerInstanceType | EC2 instance type used for replication servers.                                       | t3.small as a good default for small-scale or initial deployments; increase size for higher-throughput or larger-scale environments                                              |
-| UseDedicatedReplicationServer | Use a dedicated replication server per source server instead of sharing.              | False for most deployments; set to True only when you require a dedicated replication server per source server (for example, for specific performance or isolation requirements) |
-| StagingAreaTags               | Tags applied to staging area resources such as replication servers and staging disks. | For example, Resource=StagingArea                                                                                                                                                |
-| AdditionalTags                | Additional tags applied to staging resources.                                         | For example, Project=DisasterRecovery                                                                                                                                            |
-| CopyTags                      | Copy tags from source servers to recovery instances.                                  | False initially (enable later if needed)                                                                                                                                         |
-| CopyPrivateIp                 | Copy private IP from source to recovery instance where possible.                      | False by default; enable only if your network design requires preserving source private IP addresses on recovery instances.                                                      |
-
----
-
-#### Launch configuration and target instance behavior
-
-| Parameter                           | Purpose                                                                                   | Suggested value or default                                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| LaunchDisposition                   | Whether recovery instances are started or left stopped after launch.                      | STARTED for interactive testing                                                                              |
-| TargetInstanceTypeRightSizingMethod | Whether to right-size recovery instances based on observed characteristics.               | NONE initially; consider BASIC or IN_AWS later                                                               |
-| TargetInstanceType                  | EC2 instance type for recovery instances when right-sizing is set to NONE.                | t3.small or another instance type that matches your workload’s performance and disaster recovery objectives. |
-| OsByol                              | Enable Bring-Your-Own-License behavior for supported operating systems.                   | False unless you require BYOL                                                                                |
-| PostLaunchEnabled                   | Enable post-launch actions (for example, SSM Automation runbooks) for recovery instances. | True                                                                                                         |
-| TargetTags                          | Tags applied to recovery instances created by DRS.                                        | For example, Resource=Target                                                                                 |
-
----
-
-#### Stack outputs
-
-After the stack reaches CREATE_COMPLETE, use the Outputs tab to capture key values.
-
-| Output                                  | Description                                                          | What you might use it for                                      |
-| --------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------- |
-| VpcId                                   | ID of the created VPC.                                               | Network checks and future subnet or endpoint additions         |
-| PrivateSubnetId0                        | ID of private subnet 0 (staging subnet).                             | Staging subnet for replication servers and validation instance |
-| PrivateSubnetId1                        | ID of private subnet 1.                                              | Additional private capacity or multi-AZ patterns               |
-| PrivateRouteTableId                     | ID of the private route table.                                       | Verifying routes to VPN and VPC endpoints                      |
-| WebSecurityGroupId                      | Security group used by the Windows validation instance.              | Adjusting inbound rules for validation and troubleshooting     |
-| RecoveredInstanceSecurityGroupId        | Security group intended for recovered instances.                     | Hardening access to recovery workloads                         |
-| DrsEndpointDNS or DrsEndpointDnsEntries | DNS name or names for the DRS interface endpoint.                    | Connectivity tests from on-premises to the DRS endpoint        |
-| S3InterfaceEndpointDnsEntries           | DNS entries for the S3 interface endpoint.                           | Connectivity tests to S3 via private connectivity              |
-| SecretsManagerSecret                    | Name of the AWS Secrets Manager secret that stores RDP credentials.  | Connecting securely to the Windows validation instance         |
-| ResolverInboundEndpointIPs              | IP addresses of the Route 53 Resolver inbound endpoint (if created). | On-premises DNS forwarder configuration                        |
-| ResolverInboundEndpointId               | ID of the Route 53 Resolver inbound endpoint (if created).           | Operations and troubleshooting in Route 53 Resolver            |
-
----
-
-### Post-deploy: connect on-premises and validate
-
-After the stack is deployed:
-
-- Configure your VPN device using the downloaded Site-to-Site VPN configuration, and verify that routes between OnPremCidrBlock and TargetVpcCidrBlock are active.
-- From on-premises, resolve and test connectivity to key VPC endpoint DNS names (for example, S3, DRS, EC2, SSM) to confirm that traffic stays on the private path (VPN or Direct Connect).
-- Use PrivateSubnetId0 and RecoveredInstanceSecurityGroupId to validate that staging resources and recovered instances can reach required AWS services via VPC endpoints, and that on-premises servers can reach the staging subnet on required ports such as TCP 1500.
-- If InitializeDRS is set to Yes, review the default replication and launch configuration templates in the AWS Elastic Disaster Recovery console and align them with the guidance in the AWS Elastic Disaster Recovery configuration guidance section and the Planning, Technical Prerequisites, Installation, Drill Planning, and Invoking Recovery sections of PrescriptiveGuidance_ElasticDisasterRecovery.md:
-  - [Planning](PrescriptiveGuidance_ElasticDisasterRecovery.md#planning)
-  - [Technical Prerequisites](PrescriptiveGuidance_ElasticDisasterRecovery.md#technical-prerequisites)
-  - [Installation](PrescriptiveGuidance_ElasticDisasterRecovery.md#installation)
-  - [Drill Planning](PrescriptiveGuidance_ElasticDisasterRecovery.md#drill-planning)
-  - [Invoking Recovery](PrescriptiveGuidance_ElasticDisasterRecovery.md#invoking-recovery)
-- Onboard one or more test servers by installing the AWS Replication Agent on selected VMware VMs, starting replication over the VPN to the staging subnet, and launching recovery instances into the staging VPC to run drills or test failovers.
-
-These steps complete deployment of the Guidance template and prepare the environment for the detailed workflows (planning, onboarding, drills, failover, and failback) described in PrescriptiveGuidance_ElasticDisasterRecovery.md.
-
-## Deployment Validation
-
-You can validate a successful deployment by navigating to the [AWS CloudFormation console](https://console.aws.amazon.com/cloudformation) and verifying that the stack status is **CREATE_COMPLETE**.
 
 ## Running the Guidance and validating AWS Elastic Disaster Recovery
 
