@@ -74,6 +74,8 @@ As described in the Overview, this architecture is a starting point. You should 
 
 This environment uses multiple AWS services to support AWS Elastic Disaster Recovery, including networking ([Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html), [AWS Site-to-Site VPN](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html), [Amazon VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html), [Amazon Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html)), compute (validation instance and recovery instances), storage ([Amazon EBS](https://docs.aws.amazon.com/ebs/index.html)), and supporting services such as [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html) and [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/what-is-systems-manager.html). All costs are incurred based on standard AWS pay-as-you-go pricing in the Region where you deploy the stack.
 
+You are responsible for the cost of the AWS services used while running this Guidance. As of , the cost for running this Guidance with the default settings in the US-West-2 (Oregon) is approximately $330.91 per month for implementing the standard disaster recovery dimensions in[`drs-infrastructure-cost-analysis.md`](drs-infrastructure-cost-analysis.md#cost-calculation).
+
 For a detailed, line-item estimate and assumptions, see:
 
 - [`drs-infrastructure-cost-analysis.md`](drs-infrastructure-cost-analysis.md)
