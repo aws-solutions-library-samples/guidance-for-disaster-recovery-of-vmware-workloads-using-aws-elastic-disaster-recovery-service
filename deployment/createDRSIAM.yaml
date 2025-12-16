@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: This CloudFormation Template will create AWS IAM components required by AWS Elastic Disaster Recovery. 
+Description: "(AWS Solution ID: SO9662) This CloudFormation Template will create AWS IAM components required by AWS Elastic Disaster Recovery. "
 
 Parameters:
   DeployDRSIAMComponents:
