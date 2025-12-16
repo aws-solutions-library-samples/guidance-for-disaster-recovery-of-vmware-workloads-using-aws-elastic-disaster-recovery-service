@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "This CloudFormation template (SO9XXX) deploys a target VPC with private and public subnets across two Availability Zones, AWS Site-to-Site VPN components (Virtual Private Gateway, Customer Gateway, VPN Connection), VPC endpoints for AWS Elastic Disaster Recovery and supporting services (DRS, S3, SSM, EC2, Secrets Manager, CloudWatch Logs), Route 53 Resolver inbound endpoint for DNS resolution, optional Windows validation instance, and Lambda function to initialize DRS with default replication and launch configuration settings."
+Description: "(AWS Solution ID: SO9662) This CloudFormation template deploys a target VPC with private and public subnets across two Availability Zones, AWS Site-to-Site VPN components (Virtual Private Gateway, Customer Gateway, VPN Connection), VPC endpoints for AWS Elastic Disaster Recovery and supporting services (DRS, S3, SSM, EC2, Secrets Manager, CloudWatch Logs), Route 53 Resolver inbound endpoint for DNS resolution, optional Windows validation instance, and Lambda function to initialize DRS with default replication and launch configuration settings."
 
 Parameters:
   TargetVpcCidrBlock:
