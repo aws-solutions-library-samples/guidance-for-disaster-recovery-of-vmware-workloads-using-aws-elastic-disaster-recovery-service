@@ -1,0 +1,1228 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "This CloudFormation template (SO9XXX) deploys a target VPC with private and public subnets across two Availability Zones, AWS Site-to-Site VPN components (Virtual Private Gateway, Customer Gateway, VPN Connection), VPC endpoints for AWS Elastic Disaster Recovery and supporting services (DRS, S3, SSM, EC2, Secrets Manager, CloudWatch Logs), Route 53 Resolver inbound endpoint for DNS resolution, optional Windows validation instance, and Lambda function to initialize DRS with default replication and launch configuration settings."
+
+Parameters:
+  TargetVpcCidrBlock:
+    Type: String
+    Default: "192.168.100.0/22"
+    Description: "CIDR block for the Target VPC. Default /22 provides 1024 IPs for multi-AZ deployment with room for growth."
+
+  RDPUsername:
+    Description: Username for Windows instance RDP access (only used if CreateWindowsInstance=yes)
+    Type: String
+    Default: "rdp"
+    NoEcho: false
+
+  RDPPassword:
+    Description: Password for Windows instance RDP access (only required if CreateWindowsInstance=yes, leave blank otherwise. Must be at least 8 characters if provided)
+    Type: String
+    Default: ""
+    NoEcho: true
+
+  OnPremPublicIP:
+    Description: Public IP address of your on-premises VPN device
+    Type: String
+    AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$
+    ConstraintDescription: Must be a valid IP address (e.g., 203.0.113.1)
+
+  OnPremCidrBlock:
+    Description: CIDR block of your on-premises network
+    Type: String
+    AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+    ConstraintDescription: Must be a valid CIDR block (e.g., 10.0.0.0/16)
+
+  CreateWindowsInstance:
+    Description: Create Windows EC2 instance for testing connectivity from on-premises to AWS over VPN and showcase SSM to RDP using Fleet Manager
+    Type: String
+    Default: "yes"
+    AllowedValues:
+      - "yes"
+      - "no"
+
+  CreateRoute53Resolver:
+    Description: Create Route 53 Resolver Inbound Endpoint for DNS resolution from on-premises. Set to 'no' if using conditional DNS forwarders.
+    Type: String
+    Default: "yes"
+    AllowedValues:
+      - "yes"
+      - "no"
+
+  InitializeDRS:
+    Description: "Initialize DRS in this region? Choose 'No' if DRS service is already initialized in this specific region."
+    Type: String
+    Default: "Yes"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  AssociateDefaultSecurityGroup:
+    Description: "Associate Default Security group"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "True"
+  AutoReplicateNewDisks:
+    Description: "Auto Replicate New Disks"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "True"
+  BandwidthThrottling:
+    Description: Specifies the bandwidth throttling rate in Mbps. Leave to default if you do not want any bandwidth throttling.
+    Type: Number
+    MinValue: 0
+    Default: 0
+    ConstraintDescription: Must be a number greater than or equal to 0.
+  CreatePublicIP:
+    Description: "Create Public IP"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  DataPlaneRouting:
+    Description: "Data Plane Routing(The data plane routing mechanism that will be used for replication.)"
+    Type: String
+    AllowedValues:
+      - "PRIVATE_IP"
+      - "PUBLIC_IP"
+    Default: "PRIVATE_IP"
+    ConstraintDescription: Must be either 'PRIVATE_IP' or 'PUBLIC_IP'.
+  DefaultLargeStagingDiskType:
+    Description: "Default Large Staging Disk Type"
+    Type: String
+    AllowedValues:
+      - "GP2"
+      - "GP3"
+      - "ST1"
+      - "AUTO"
+    Default: "AUTO"
+  EbsEncryption:
+    Description: "EBS Encryption"
+    Type: String
+    AllowedValues:
+      - "DEFAULT"
+      - "CUSTOM"
+    Default: "DEFAULT"
+  EbsEncryptionKeyArn:
+    Description: ARN of the KMS key for EBS encryption (Leave as DefaultKey if ebsEncryption is selected as DEFAULT )
+    Type: String
+    AllowedPattern: "(^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-_]+$)|(^DefaultKey$)"
+    Default: "DefaultKey"
+    ConstraintDescription: Must be a valid KMS key ARN.
+  PitPolicyDaily:
+    Description: Specifies the daily rate for Point in Time Snapshot Policy.
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 365
+    ConstraintDescription: Must be a number between 1 and 365.
+  ReplicationServerInstanceType:
+    Description: Specifies the EC2 instance type for the replication server.
+    Type: String
+    AllowedValues:
+      ["t3.small", "m5.xlarge", "m5.2xlarge", "m4.xlarge", "m4.2xlarge"]
+    Default: "t3.small"
+    ConstraintDescription: Check if the replication instance type is valid and available in the region.
+  UseDedicatedReplicationServer:
+    Description: "Use Dedicated Replication Server"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  StagingAreaTags:
+    Description: "Comma-separated list of tags for the staging area in the format Key=Value."
+    Type: CommaDelimitedList
+    Default: "Resource=StagingArea"
+    ConstraintDescription: Must be a comma-separated list of tags in the format Key=Value.
+  AdditionalTags:
+    Description: "Comma-separated list of tags in the format Key=Value."
+    Type: CommaDelimitedList
+    Default: "Project=DisasterRecovery"
+    ConstraintDescription: Must be a comma-separated list of tags in the format Key=Value.
+  CopyPrivateIp:
+    Description: "Copy Private IP"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  CopyTags:
+    Description: "Copy Source Tags"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  ExportBucketArn:
+    Description: "S3 bucket ARN to export Source Network templates (applicable only when using Copy Source network option for in-AWS)"
+    Type: String
+    Default: ""
+    AllowedPattern: ^$|^arn:aws[a-z\-0-9]*:s3:::[a-z0-9\.-]{3,63}$
+    ConstraintDescription: Must be a valid S3 bucket ARN like arn:aws:s3:::mybucket
+  LaunchDisposition:
+    Description: "Target instance state when launched"
+    Type: String
+    AllowedValues:
+      - "STOPPED"
+      - "STARTED"
+    Default: "STARTED"
+  OsByol:
+    Description: "Whether to enable Bring your own license or not(only applies to Windows Servers)."
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  TargetTags:
+    Description: Comma-separated list to associate tags during creation of a Launch Configuration Template in the format Key=Value,Key1=Value1.
+    Type: CommaDelimitedList
+    Default: "Resource=Target"
+    ConstraintDescription: Must be a comma-separated list of tags in the format Key=Value.
+  TargetInstanceTypeRightSizingMethod:
+    Description: "Target instance type right-sizing method"
+    Type: String
+    AllowedValues:
+      - "NONE"
+      - "BASIC"
+      - "IN_AWS"
+    Default: "NONE"
+  TargetInstanceType:
+    Description: "EC2 instance type for the Target server."
+    Type: String
+    AllowedValues:
+      ["t3.small", "m5.xlarge", "m5.2xlarge", "m4.xlarge", "m4.2xlarge"]
+    Default: "m5.xlarge"
+    ConstraintDescription: Check if the Target instance type is valid and available in the region.
+  LaunchIntoSourceInstance:
+    Description: "Whether to launch the failover/failback server into a specific EC2"
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "False"
+  PostLaunchEnabled:
+    Description: "Whether we want to activate post-launch actions."
+    Type: String
+    AllowedValues:
+      - "True"
+      - "False"
+    Default: "True"
+
+Conditions:
+  CreateWindowsInstanceCondition: !Equals [!Ref CreateWindowsInstance, "yes"]
+  CreateRoute53ResolverCondition: !Equals [!Ref CreateRoute53Resolver, "yes"]
+  UseKMSKey: !Not [!Equals [!Ref EbsEncryptionKeyArn, "DefaultKey"]]
+  HasExportBucket: !Not [!Equals [!Ref ExportBucketArn, ""]]
+  ShouldInitializeDRS: !Equals [!Ref InitializeDRS, "Yes"]
+
+Resources:
+  DRSCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "drs-workshop-credentials-${AWS::Region}"
+      Description: "DRS Workshop credentials for RDP and SSH access"
+      SecretString: !Sub |
+        {
+          "RDPUsername": "${RDPUsername}",
+          "RDPPassword": "${RDPPassword}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-credentials-secret"
+        - Key: Project
+          Value: DRS-VMware
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref TargetVpcCidrBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+        - Key: VPCPeer
+          Value: Requester
+        - Key: Project
+          Value: DRS-VMware
+
+  # Private Subnets - 3 AZ design
+  PrivateSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [0, !Cidr [!Ref TargetVpcCidrBlock, 6, 6]]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-0"
+        - Key: Project
+          Value: DRS-VMware
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [1, !Cidr [!Ref TargetVpcCidrBlock, 6, 6]]
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-1"
+        - Key: Project
+          Value: DRS-VMware
+
+  # Public Subnets - 2 AZ design for maximum compatibility
+  PublicSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [3, !Cidr [!Ref TargetVpcCidrBlock, 6, 6]]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-0"
+        - Key: Project
+          Value: DRS-VMware
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [4, !Cidr [!Ref TargetVpcCidrBlock, 6, 6]]
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+        - Key: Project
+          Value: DRS-VMware
+
+  # Route Tables
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-routetable"
+        - Key: Project
+          Value: DRS-VMware
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-routetable"
+        - Key: Project
+          Value: DRS-VMware
+
+  # Private Subnet Route Table Associations
+  PrivateSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet0
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Public Subnet Route Table Associations
+  PublicSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet0
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  # Site-to-Site VPN Components
+  VpnGateway:
+    Type: AWS::EC2::VPNGateway
+    Properties:
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpn-gateway"
+        - Key: Project
+          Value: DRS-VMware
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      VpnGatewayId: !Ref VpnGateway
+
+  CustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: !Ref OnPremPublicIP
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-customer-gateway"
+        - Key: Project
+          Value: DRS-VMware
+
+  VpnConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      StaticRoutesOnly: true
+      CustomerGatewayId: !Ref CustomerGateway
+      VpnGatewayId: !Ref VpnGateway
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpn-connection"
+        - Key: Project
+          Value: DRS-VMware
+
+  VpnConnectionRoute:
+    Type: AWS::EC2::VPNConnectionRoute
+    Properties:
+      VpnConnectionId: !Ref VpnConnection
+      DestinationCidrBlock: !Ref OnPremCidrBlock
+
+  PrivateRouteToOnPrem:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: !Ref OnPremCidrBlock
+      GatewayId: !Ref VpnGateway
+
+  WebSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Condition: CreateWindowsInstanceCondition
+    Properties:
+      GroupDescription: "Security group for web instances"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Web-SG"
+        - Key: Project
+          Value: DRS-VMware
+      SecurityGroupIngress:
+        - Description: "Allow HTTPS from on-premises network"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref OnPremCidrBlock
+        - Description: "Allow RDP from target VPC"
+          IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: !Ref TargetVpcCidrBlock
+        - Description: "Allow RDP from on-premises network"
+          IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: !Ref OnPremCidrBlock
+        - Description: "Allow ICMP from on-premises network"
+          IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref OnPremCidrBlock
+      SecurityGroupEgress:
+        - Description: "Allow all outbound traffic"
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  VPCEndpointSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for VPCEndpoints"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPCE-SG"
+        - Key: Project
+          Value: DRS-VMware
+      SecurityGroupIngress:
+        - Description: "Allow HTTPS traffic from VPC for VPC endpoints"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref TargetVpcCidrBlock
+        - Description: "Allow HTTPS traffic from on-premises for VPC endpoints"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref OnPremCidrBlock
+      SecurityGroupEgress:
+        - Description: "Allow all outbound traffic"
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  StagingSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for DRS staging area"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Staging-SG"
+        - Key: Project
+          Value: DRS-VMware
+      SecurityGroupIngress:
+        - Description: "Allow HTTPS traffic from VPC for VPC endpoints"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref TargetVpcCidrBlock
+        - Description: "Allow HTTPS traffic from on-premises for VPC endpoints"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref OnPremCidrBlock
+        - Description: "Allow port 1500 from on-premises network"
+          IpProtocol: tcp
+          FromPort: 1500
+          ToPort: 1500
+          CidrIp: !Ref OnPremCidrBlock
+      SecurityGroupEgress:
+        - Description: "Allow all outbound traffic"
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  RecoveredInstanceSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for DRS recovered instances"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Recovered-Instance-SG"
+        - Key: Project
+          Value: DRS-VMware
+      SecurityGroupIngress:
+        - Description: "Allow HTTPS from anywhere"
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - Description: "Allow RDP from on-premises network"
+          IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: !Ref OnPremCidrBlock
+        - Description: "Allow SSH from on-premises network"
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref OnPremCidrBlock
+      SecurityGroupEgress:
+        - Description: "Allow all outbound traffic"
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  ValidationInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Condition: CreateWindowsInstanceCondition
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-validationinstance-profile-role"
+      Path: "/"
+      Roles:
+        - !Ref ValidationRole
+
+  ValidationRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateWindowsInstanceCondition
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-validation-role"
+        - Key: Project
+          Value: DRS-VMware
+
+  WindowsInstance1:
+    Type: "AWS::EC2::Instance"
+    Condition: CreateWindowsInstanceCondition
+    Properties:
+      IamInstanceProfile: !Ref ValidationInstanceProfile
+      ImageId: "{{resolve:ssm:/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base}}"
+      InstanceType: "t3.small"
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref WebSecurityGroup
+          AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref PrivateSubnet0
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          $logFile = "C:\UserDataLog.txt"
+
+          # Get credentials from Secrets Manager
+          $secretValue = Get-SECSecretValue -SecretId "drs-workshop-credentials-${AWS::Region}" -Region "${AWS::Region}"
+          $credentials = $secretValue.SecretString | ConvertFrom-Json
+          $rdpUsername = $credentials.RDPUsername
+          $rdpPassword = $credentials.RDPPassword
+
+          # Create new user and set password
+          New-LocalUser -Name $rdpUsername -Password (ConvertTo-SecureString -AsPlainText $rdpPassword -Force) -FullName "RDP User" -Description "RDP Access User" 2>&1 | Out-File $logFile -Append
+
+          # Add the user to the local 'Administrators' group
+          Add-LocalGroupMember -Group "Administrators" -Member $rdpUsername 2>&1 | Out-File $logFile -Append
+
+          # Enable RDP on Windows
+          Set-NetFirewallRule -Name RDP -Enabled True 2>&1 | Out-File $logFile -Append
+          New-NetFirewallRule -DisplayName "Allow HTTPS from On-Prem" -Direction Inbound -Protocol TCP -LocalPort 443 -RemoteAddress "${OnPremCidrBlock}" -Action Allow 2>&1 | Out-File $logFile -Append
+          </powershell>
+      Tags:
+        - Key: "Name"
+          Value: "FailBackValidation"
+        - Key: Project
+          Value: DRS-VMware
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Gateway"
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:GetObject"
+            Resource:
+              - "arn:aws:s3:::*"
+
+  S3InterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    DependsOn: S3GatewayEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-s3-interface-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ssm-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ssm-messages-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2-messages-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  EC2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  CloudWatchLogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-cloudwatch-logs-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  DrsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: false # required to allow private hosted zone to work and for reverse replication after failback
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.drs"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-drs-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.secretsmanager"
+      SubnetIds:
+        - !Ref PrivateSubnet0
+      VpcEndpointType: "Interface"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-secrets-manager-endpoint"
+        - Key: Project
+          Value: DRS-VMware
+
+  # Route 53 Resolver Security Group
+  ResolverSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateRoute53ResolverCondition
+    Properties:
+      GroupDescription: "Security group for Route 53 Resolver Inbound Endpoint"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Resolver-SG"
+        - Key: Project
+          Value: DRS-VMware
+      SecurityGroupIngress:
+        - Description: "Allow DNS TCP from on-premises network"
+          IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref OnPremCidrBlock
+        - Description: "Allow DNS UDP from on-premises network"
+          IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref OnPremCidrBlock
+      SecurityGroupEgress:
+        - Description: "Allow all outbound traffic"
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  # Route 53 Resolver Inbound Endpoint
+  ResolverInboundEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Condition: CreateRoute53ResolverCondition
+    Properties:
+      Direction: INBOUND
+      SecurityGroupIds:
+        - !Ref ResolverSecurityGroup
+      IpAddresses:
+        - SubnetId: !Ref PrivateSubnet0
+        - SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-inbound-resolver"
+        - Key: Project
+          Value: DRS-VMware
+
+  PrivateZoneTarget:
+    Type: "AWS::Route53::HostedZone"
+    Properties:
+      Name: !Sub "drs.${AWS::Region}.amazonaws.com."
+      VPCs:
+        - VPCId: !Ref Vpc
+          VPCRegion: !Ref AWS::Region
+      HostedZoneTags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-drs-private-zone"
+        - Key: Project
+          Value: DRS-VMware
+
+  DrsAliasRecord:
+    Type: "AWS::Route53::RecordSetGroup"
+    Properties:
+      HostedZoneId: !Ref PrivateZoneTarget
+      RecordSets:
+        - Name: !Sub "drs.${AWS::Region}.amazonaws.com."
+          Type: "A"
+          AliasTarget:
+            HostedZoneId:
+              !Select [
+                0,
+                !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]],
+              ]
+            DNSName:
+              !Select [
+                1,
+                !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]],
+              ]
+
+  DRSLambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: DRSServicePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "iam:AttachRolePolicy"
+                Resource: "*"
+                Condition:
+                  ForAnyValue:ArnEquals:
+                    iam:PolicyARN:
+                      - "arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryAgentPolicy"
+                      - "arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryFailbackPolicy"
+                      - "arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryConversionServerPolicy"
+                      - "arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryRecoveryInstancePolicy"
+                      - "arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryReplicationServerPolicy"
+              - Effect: Allow
+                Action: "iam:PassRole"
+                Resource: "arn:aws:iam::*:role/*"
+                Condition:
+                  ForAnyValue:StringLike:
+                    iam:PassedToService:
+                      - "ec2.amazonaws.com"
+                      - "drs.amazonaws.com"
+              - Effect: Allow
+                Action:
+                  - "drs:InitializeService"
+                  - "drs:ListTagsForResource"
+                  - "drs:GetReplicationConfiguration"
+                  - "drs:CreateLaunchConfigurationTemplate"
+                  - "drs:GetLaunchConfiguration"
+                  - "drs:CreateReplicationConfigurationTemplate"
+                  - "drs:*ReplicationConfigurationTemplate*"
+                  - "drs:*LaunchConfigurationTemplate*"
+                  - "drs:DescribeSourceServers"
+                  - "drs:*TagResource"
+                  - "drs:*UnTagResource"
+                  - "iam:TagRole"
+                  - "iam:CreateRole"
+                  - "iam:GetServiceLinkedRoleDeletionStatus"
+                  - "iam:ListAttachedRolePolicies"
+                  - "iam:ListRolePolicies"
+                  - "iam:GetRole"
+                  - "iam:DeleteRole"
+                  - "iam:DeleteServiceLinkedRole"
+                  - "ec2:CreateSecurityGroup"
+                  - "ec2:CreateTags"
+                  - "sts:DecodeAuthorizationMessage"
+                  - "ec2:DescribeSecurityGroups"
+                  - "ec2:Get*"
+                Resource: "*"
+              - Effect: Allow
+                Action: "iam:CreateServiceLinkedRole"
+                Resource: "arn:aws:iam::*:role/aws-service-role/drs.amazonaws.com/AWSServiceRoleForElasticDisasterRecovery"
+              - Effect: Allow
+                Action:
+                  - "iam:CreateInstanceProfile"
+                  - "iam:ListInstanceProfilesForRole"
+                  - "iam:GetInstanceProfile"
+                  - "iam:ListInstanceProfiles"
+                  - "iam:AddRoleToInstanceProfile"
+                Resource:
+                  - "arn:aws:iam::*:instance-profile/*"
+                  - "arn:aws:iam::*:role/*"
+        - PolicyName: EC2LaunchTemplatePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ec2:CreateLaunchTemplate"
+                  - "ec2:DescribeLaunchTemplates"
+                  - "ec2:DescribeSubnets"
+                Resource: "*"
+        - PolicyName: KMSPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: KMSGrantForDRSLambda
+                Effect: Allow
+                Action:
+                  - "kms:CreateGrant"
+                Resource:
+                  - !If
+                    - UseKMSKey
+                    - Ref: EbsEncryptionKeyArn
+                    - !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ebs"
+
+  DRSInitializationFunction:
+    Type: AWS::Lambda::Function
+    Condition: ShouldInitializeDRS
+    Properties:
+      Environment:
+        Variables:
+          disasterrecovery_region: !Ref "AWS::Region"
+          # Default Replication Parameters
+          stagingAreaSubnetId: !Ref PrivateSubnet0
+          associateDefault_SecurityGroup: !Ref AssociateDefaultSecurityGroup
+          autoReplicateNewDisks: !Ref AutoReplicateNewDisks
+          bandwidthThrottling: !Ref BandwidthThrottling
+          createPublicIP: !Ref CreatePublicIP
+          dataPlaneRouting: !Ref DataPlaneRouting
+          defaultLargeStagingDiskType: !Ref DefaultLargeStagingDiskType
+          ebsEncryption: !Ref EbsEncryption
+          ebsEncryptionKeyArn:
+            !If [UseKMSKey, !Ref EbsEncryptionKeyArn, !Ref "AWS::NoValue"]
+          pitPolicyDaily: !Ref PitPolicyDaily
+          replicationServerInstanceType: !Ref ReplicationServerInstanceType
+          replicationServersSecurityGroupsIDs: !Ref StagingSecurityGroup
+          useDedicatedReplicationServer: !Ref UseDedicatedReplicationServer
+          stagingAreaTags: !Join [",", !Ref StagingAreaTags]
+          additionalTags: !Join [",", !Ref AdditionalTags]
+          # Default Launch Parameters
+          copyPrivateIp: !Ref CopyPrivateIp
+          copyTags: !Ref CopyTags
+          exportBucketArn:
+            !If [HasExportBucket, !Ref ExportBucketArn, !Ref "AWS::NoValue"]
+          launchDisposition: !Ref LaunchDisposition
+          osByol: !Ref OsByol
+          targettags: !Join [",", !Ref TargetTags]
+          targetInstanceTypeRightSizingMethod: !Ref TargetInstanceTypeRightSizingMethod
+          launchIntoSourceInstance: !Ref LaunchIntoSourceInstance
+          postLaunchEnabled: !Ref PostLaunchEnabled
+      FunctionName: ElasticDisasterRecoveryServiceInitializationFunction
+      Handler: "index.lambda_handler"
+      Runtime: "python3.12"
+      MemorySize: 128
+      Timeout: 900
+      Role: !GetAtt DRSLambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import sys
+          from pip._internal import main
+
+          main(['install', '-I', '-q', 'boto3', '--target', '/tmp/', '--no-cache-dir', '--disable-pip-version-check'])
+          sys.path.insert(0,'/tmp/')
+
+          import boto3
+          import traceback
+          import cfnresponse
+          import os
+          import time
+
+          def initialize_drs(drs_client):
+              # Initialize DRS Service https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/drs/client/initialize_service.html
+              print("Initialization started")
+              try:
+              # Initialize DRS Service
+                  print("Initialization try block")
+                  response = drs_client.initialize_service()
+                  print("Initialization complete")
+                  print("Initialization response: ", response)
+                  return response
+              except drs_client.exceptions.ValidationException as ve:
+                  if "already initialized" in str(ve) or "Failed to create SLR or instance profiles" in str(ve):
+                      print("DRS already initialized, continuing with configuration...")
+                      return {"status": "already_initialized"}
+                  else:
+                      raise ve
+              
+          def set_default_replication_settings(drs_client):
+              print("Replication Function started")
+              # Convert the list of Tags "Key=Value" strings into a dictionary
+              staging_area_tags_list = os.environ['stagingAreaTags'].split(',')
+              additional_tags_list = os.environ['additionalTags'].split(',')
+
+              staging_area_tags_dict = {tag.split('=')[0]: tag.split('=')[1] for tag in staging_area_tags_list}
+              additional_tags_dict = {tag.split('=')[0]: tag.split('=')[1] for tag in additional_tags_list}
+
+              replicationServersSecurityGroupsIDs_value = os.environ.get('replicationServersSecurityGroupsIDs', 'none')
+              print("replicationServersSecurityGroupsIDs_value", replicationServersSecurityGroupsIDs_value)
+
+              if replicationServersSecurityGroupsIDs_value == 'none':
+                lambda_replicationServersSecurityGroupsIDs = []
+              else:
+                lambda_replicationServersSecurityGroupsIDs = replicationServersSecurityGroupsIDs_value.split(',')
+
+              replication_params = {
+                      'associateDefaultSecurityGroup': os.environ['associateDefault_SecurityGroup'] == 'True',
+                      'autoReplicateNewDisks': os.environ['autoReplicateNewDisks'] == 'True', 
+                      'bandwidthThrottling': int(os.environ['bandwidthThrottling']),
+                      'createPublicIP': os.environ['createPublicIP'] == 'True',
+                      'dataPlaneRouting': os.environ['dataPlaneRouting'],
+                      'defaultLargeStagingDiskType': os.environ['defaultLargeStagingDiskType'],
+                      'ebsEncryption': os.environ['ebsEncryption'],
+                      'pitPolicy': [
+                          {"enabled": True, "interval": 10, "retentionDuration": 60, "ruleID": 1, "units": "MINUTE"},
+                          {"enabled": True, "interval": 1, "retentionDuration": 24, "ruleID": 2, "units": "HOUR"},
+                          {"enabled": True, "interval": 1, "retentionDuration": int(os.environ['pitPolicyDaily']), "ruleID": 3, "units": "DAY"}
+                      ],
+                      'replicationServerInstanceType': os.environ['replicationServerInstanceType'],
+                      'replicationServersSecurityGroupsIDs': lambda_replicationServersSecurityGroupsIDs,
+                      'stagingAreaSubnetId': os.environ['stagingAreaSubnetId'], 
+                      'stagingAreaTags': staging_area_tags_dict,
+                      'tags': additional_tags_dict,
+                      'useDedicatedReplicationServer': os.environ['useDedicatedReplicationServer'] == 'True' 
+                      }
+              print("Parameters" + str(replication_params))
+
+              if 'ebsEncryptionKeyArn' in os.environ and os.environ['ebsEncryptionKeyArn'] != 'AWS::NoValue':
+                  replication_params['ebsEncryptionKeyArn'] = os.environ['ebsEncryptionKeyArn'] 
+
+              response = drs_client.create_replication_configuration_template(**replication_params)
+              print("replication parameters done")
+              print("replication response: ", response)
+              return response
+
+          def set_default_launch_settings(drs_client):
+              print("Launch Settings Function started")
+              # Create default launch configuration template https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/drs/client/create_launch_configuration_template.html
+              # Convert the list of Tags "Key=Value" strings into a dictionary
+              print("Target tags" +os.environ['targettags'])
+              target_tags_list = os.environ['targettags'].split(',')
+              
+              target_tags_dict = {tag.split('=')[0]: tag.split('=')[1] for tag in target_tags_list}
+
+              licensing_dict = {
+              'osByol': os.environ['osByol'] == 'True' 
+              }
+              print("bluprint params start")
+
+              blueprint_params={
+                  'copyPrivateIp' : os.environ['copyPrivateIp'] == 'True',
+                  'copyTags' : os.environ['copyTags'] == 'True',
+                  'launchDisposition' : os.environ['launchDisposition'],
+                  'licensing' : licensing_dict,
+                  'tags' : target_tags_dict,
+                  'targetInstanceTypeRightSizingMethod' : os.environ['targetInstanceTypeRightSizingMethod'],
+                  'launchIntoSourceInstance': os.environ['launchIntoSourceInstance'] == 'True',
+                  'postLaunchEnabled': os.environ['postLaunchEnabled'] == 'True'
+              }
+              print("bluprint params" +str(blueprint_params))
+
+              response = drs_client.create_launch_configuration_template(**blueprint_params)
+              print("bluprint params done")
+              print("blueprint response: ", response)
+              return response
+
+          def lambda_handler(event, context):
+              if event['RequestType'] == "Create":
+                  print("Lambda started. Event is: ", event)
+                  print("Lambda event request type: ", event['RequestType'])
+                  print("disasterrecovery_region: ", os.environ['disasterrecovery_region'])
+                  drs_client = boto3.client('drs', region_name=os.environ['disasterrecovery_region'])
+                  try:
+                      initialize_drs(drs_client)
+                      set_default_replication_settings(drs_client)
+                      set_default_launch_settings(drs_client)
+                      responseData = {
+                              'Message': 'All operations completed successfully'
+                              }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                      return responseData
+
+                  except Exception as e:
+                      error_message = str(e)
+                      traceback_message = traceback.format_exc()
+
+                      print(f"Error: {error_message}")
+                      print(f"Traceback: {traceback_message}")
+
+                      responseData = {
+                          'Error': error_message,
+                          'Traceback': traceback_message,
+                          'Message': 'Elastic Disaster Recovery service initialization failed in region'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
+                      return responseData
+              elif event['RequestType'] == "Delete":
+                  responseData = {
+                    'Message': 'All operations completed successfully'
+                    }
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+
+  DRSInitializationInvoke:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: ShouldInitializeDRS
+    DependsOn:
+      - DRSLambdaExecutionRole
+      - DrsEndpoint
+      - DrsAliasRecord
+      - PrivateZoneTarget
+    Properties:
+      ServiceToken: !GetAtt "DRSInitializationFunction.Arn"
+
+  DRSDefaultLaunchTemplate:
+    Type: "AWS::EC2::LaunchTemplate"
+    Condition: ShouldInitializeDRS
+    DependsOn:
+      - DRSInitializationInvoke
+    Properties:
+      LaunchTemplateName: "created-and-used-by-elastic-disaster-recovery-service-account_level_template-230101-00000"
+      LaunchTemplateData:
+        InstanceType: !Ref TargetInstanceType
+        IamInstanceProfile:
+          Arn: !Sub "arn:aws:iam::${AWS::AccountId}:instance-profile/AWSElasticDisasterRecoveryRecoveryInstanceRole"
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: "False"
+            SubnetId: !Ref PrivateSubnet1
+            Groups:
+              - !Ref RecoveredInstanceSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: "drs-default-device"
+            Ebs:
+              DeleteOnTermination: true
+      TagSpecifications:
+        - ResourceType: "launch-template"
+          Tags:
+            - Key: "drs-default-template"
+              Value: "created-by-aws-drs-do-not-delete"
+            - Key: "AWSElasticDisasterRecoveryManaged"
+              Value: "drs.amazonaws.com"
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Description: "VPC ID"
+
+  DrsEndpointHostedZoneId:
+    Description: "DnsEntry of the Drs VPC Endpoint"
+    Value:
+      !Select [0, !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]]]
+    Export:
+      Name: "DrsEndpointHostedZoneId"
+
+  DrsEndpointDNS:
+    Description: "DnsEntry of the Drs VPC Endpoint"
+    Value:
+      !Select [1, !Split [":", !Select [0, !GetAtt DrsEndpoint.DnsEntries]]]
+    Export:
+      Name: "DrsEndpointDNS"
+
+  PrivateSubnetId0:
+    Value: !Ref PrivateSubnet0
+    Description: "Private subnet ID 0"
+
+  PrivateSubnetId1:
+    Value: !Ref PrivateSubnet1
+    Description: "Private subnet ID 1"
+
+  PrivateRouteTableId:
+    Value: !Ref PrivateRouteTable
+    Description: "Private route table ID"
+
+  WebSecurityGroupId:
+    Condition: CreateWindowsInstanceCondition
+    Value: !Ref WebSecurityGroup
+    Description: "Web Security Group ID"
+
+  RecoveredInstanceSecurityGroupId:
+    Value: !Ref RecoveredInstanceSecurityGroup
+    Description: "Recovered Instance Security Group ID"
+
+  S3InterfaceEndpointDnsEntries:
+    Description: All DNS entries for the VPC Endpoint
+    Value: !Join [", ", !GetAtt S3InterfaceEndpoint.DnsEntries]
+
+  DrsEndpointDnsEntries:
+    Description: All DNS entries for the VPC Endpoint
+    Value: !Join [", ", !GetAtt DrsEndpoint.DnsEntries]
+
+  SecretsManagerSecret:
+    Description: "Secrets Manager secret name containing RDP credentials"
+    Value: !Sub "drs-workshop-credentials-${AWS::Region}"
+
+  ResolverInboundEndpointIPs:
+    Condition: CreateRoute53ResolverCondition
+    Description: "Route 53 Resolver Inbound Endpoint - check AWS console for IP addresses"
+    Value: !Ref ResolverInboundEndpoint
+
+  ResolverInboundEndpointId:
+    Condition: CreateRoute53ResolverCondition
+    Description: "ID of the Route 53 Resolver Inbound Endpoint"
+    Value: !Ref ResolverInboundEndpoint

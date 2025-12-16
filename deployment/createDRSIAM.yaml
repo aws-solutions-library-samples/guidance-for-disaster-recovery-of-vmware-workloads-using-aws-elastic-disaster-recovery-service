@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This CloudFormation Template will create AWS IAM components required by AWS Elastic Disaster Recovery. 
+
+Parameters:
+  DeployDRSIAMComponents:
+    Description: "Create DRS IAM roles? Choose 'no' if DRS IAM roles already exist in this ACCOUNT (account-wide, only needed once per account)."
+    Type: String
+    Default: "yes"
+    AllowedValues:
+      - "yes"
+      - "no"
+Conditions:
+  CreateResources: !Equals [!Ref DeployDRSIAMComponents, "yes"]
+
+Resources:
+  # IAM Role for DRS Agent - allows DRS service to perform operations on source servers
+  AWSElasticDisasterRecoveryAgentRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryAgentRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "drs.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+              - "sts:SetSourceIdentity"
+            Condition:
+              StringLike:
+                sts:SourceIdentity: "s-*"
+                aws:SourceAccount: !Ref "AWS::AccountId"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryAgentPolicy
+
+  # IAM Role for DRS Failback - enables failback operations from AWS to on-premises
+  AWSElasticDisasterRecoveryFailbackRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryFailbackRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "drs.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+              - "sts:SetSourceIdentity"
+            Condition:
+              StringLike:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+                sts:SourceIdentity: "i-*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryFailbackPolicy
+
+  # IAM Role for DRS Conversion Server - used by EC2 instances that convert replicated data
+  AWSElasticDisasterRecoveryConversionServerRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryConversionServerRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryConversionServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # IAM Role for DRS Recovery Instance - used by recovered EC2 instances during disaster recovery
+  AWSElasticDisasterRecoveryRecoveryInstanceRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryRecoveryInstanceRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryRecoveryInstancePolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # IAM Role for DRS Replication Server - used by EC2 instances that handle data replication
+  AWSElasticDisasterRecoveryReplicationServerRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryReplicationServerRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryReplicationServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonSSMPatchAssociation
+
+  # IAM Role for DRS Recovery Instance with Launch Actions - used by recovered instances that execute post-launch scripts
+  AWSElasticDisasterRecoveryRecoveryInstanceWithLaunchActionsRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateResources
+    Properties:
+      RoleName: "AWSElasticDisasterRecoveryRecoveryInstanceWithLaunchActionsRole"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticDisasterRecoveryLaunchActionsPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # Instance Profile for Recovery Instance Role - allows EC2 instances to use the recovery instance role
+  AWSElasticDisasterRecoveryRecoveryInstanceRoleInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Condition: CreateResources
+    Properties:
+      InstanceProfileName: "AWSElasticDisasterRecoveryRecoveryInstanceRole"
+      Roles:
+        - !Ref AWSElasticDisasterRecoveryRecoveryInstanceRole
+
+  # Instance Profile for Replication Server Role - allows EC2 instances to use the replication server role
+  AWSElasticDisasterRecoveryReplicationServerRoleInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Condition: CreateResources
+    Properties:
+      InstanceProfileName: "AWSElasticDisasterRecoveryReplicationServerRole"
+      Roles:
+        - !Ref AWSElasticDisasterRecoveryReplicationServerRole
+
+  # Instance Profile for Conversion Server Role - allows EC2 instances to use the conversion server role
+  AWSElasticDisasterRecoveryConversionServerRoleInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Condition: CreateResources
+    Properties:
+      InstanceProfileName: "AWSElasticDisasterRecoveryConversionServerRole"
+      Roles:
+        - !Ref AWSElasticDisasterRecoveryConversionServerRole
