@@ -54,7 +54,7 @@ With Elastic Disaster Recovery, customers gain the following benefits:
 
 ## Architecture
 
-![Architecture Diagram](./assets/images/architecture-diagram.png)
+![Architecture Diagram](./assets/architecture-diagram.png)
 
 ## Core Concepts
 
