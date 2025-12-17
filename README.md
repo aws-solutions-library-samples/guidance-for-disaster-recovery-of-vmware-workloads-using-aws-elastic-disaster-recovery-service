@@ -22,7 +22,7 @@ This README describes the CloudFormation template and how to deploy and operate 
 10. [Notices](#notices)
 11. [Authors](#authors)
 
-This repository accompanies the AWS Prescriptive Guidance document [`PrescriptiveGuidance_AWSElasticDisasterRecovery.md`](PrescriptiveGuidance_AWSElasticDisasterRecovery.md), which explains how to use **AWS Elastic Disaster Recovery (AWS DRS)**, including background, architecture patterns, planning considerations, and end-to-end usage guidance. This README focuses on the **infrastructure-as-code implementation** of that Guidance. It explains what the `DRSPrivateBaseTemplate.yaml` CloudFormation template deploys and how to deploy and operate the private-connectivity environment in your AWS accounts to validate continuous replication, connectivity, and recovery behavior.
+This repository accompanies the AWS Prescriptive Guidance document [`PrescriptiveGuidance_AWSElasticDisasterRecovery.md`](PrescriptiveGuidance_ElasticDisasterRecovery.md), which explains how to use **AWS Elastic Disaster Recovery (AWS DRS)**, including background, architecture patterns, planning considerations, and end-to-end usage guidance. This README focuses on the **infrastructure-as-code implementation** of that Guidance. It explains what the `DRSPrivateBaseTemplate.yaml` CloudFormation template deploys and how to deploy and operate the private-connectivity environment in your AWS accounts to validate continuous replication, connectivity, and recovery behavior.
 
 ## Overview
 
